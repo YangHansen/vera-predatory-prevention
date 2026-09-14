@@ -98,7 +98,9 @@ Respond ONLY with a valid JSON array of strings in plain English, e.g. ["Point 1
                 role: "user",
                 parts: [
                   {
-                    text: `Analyze this insurance financial advisor sales dialogue for aggressive sales tactics, high-pressure closing, misleading guaranteed investment returns, or omitted disclosures according to Monetary Authority of Singapore (MAS) Guidelines on Fair Dealing and the Financial Advisers Act (FAA).
+                    text: `Analyze this insurance sales dialogue (which may include the advisor's pitch, customer conditions/inquiries, and Q&A exchanges between customer and advisor) for aggressive sales tactics, high-pressure closing, misleading guaranteed investment returns, omitted disclosures, or non-compliant answers to customer questions.
+Assess strictly against Monetary Authority of Singapore (MAS) Guidelines on Fair Dealing, the Financial Advisers Act (FAA), and the Insurance Act (Section 25(5) Duty of Disclosure for pre-existing medical conditions).
+
 Confidence threshold for warning trigger is 0.80.
 
 Dialogue snippet: "${dialogueSnippet}"
@@ -115,6 +117,18 @@ Output JSON format strictly in English:
       "confidence": number,
       "triggerSnippet": string,
       "explanation": string
+    }
+  ],
+  "auditedQnAs": [
+    {
+      "clientQuestion": string,
+      "advisorAnswer": string,
+      "isCompliant": boolean,
+      "flag": "GREEN" | "YELLOW" | "RED",
+      "topic": "PRE_EXISTING_CONDITION" | "SURRENDER_PENALTY" | "GUARANTEED_RETURN" | "PREMIUM_ESCALATION" | "OTHER",
+      "regulatoryNotice": string,
+      "explanation": string,
+      "compliantScript": string
     }
   ],
   "suggestedAnswers": [
@@ -245,6 +259,51 @@ Output JSON format strictly in English:
   private static mockDialogueAnalysis(snippet: string, timestamp: string): CopilotAnalysisResult {
     const lower = snippet.toLowerCase();
 
+    // Check for Q&A turns with pre-existing condition or non-disclosure violations
+    if (
+      (lower.includes("pre-existing") || lower.includes("hypertension") || lower.includes("diabetes") || lower.includes("condition")) &&
+      (lower.includes("don't declare") || lower.includes("dont declare") || lower.includes("leave it blank") || lower.includes("no need to mention") || lower.includes("approves everyone"))
+    ) {
+      return {
+        isCompliant: false,
+        warningFlags: "RED",
+        confidenceScore: 0.98,
+        detectedIssues: [
+          {
+            type: "MISSING_DISCLOSURE",
+            severity: "high",
+            confidence: 0.98,
+            triggerSnippet: snippet,
+            explanation:
+              "Advised client to conceal or omit pre-existing medical conditions. Under Section 25(5) of the Singapore Insurance Act, failure to disclose material facts entitles the insurer to void the contract and deny claims.",
+          },
+        ],
+        auditedQnAs: [
+          {
+            clientQuestion: "Inquired about coverage for pre-existing medical condition (hypertension/illness)",
+            advisorAnswer: "Advised not to declare or leave blank on application form",
+            isCompliant: false,
+            flag: "RED",
+            topic: "PRE_EXISTING_CONDITION",
+            regulatoryNotice: "Section 25(5) Insurance Act (Duty of Disclosure)",
+            explanation:
+              "Advisors must never encourage non-disclosure. Concealing pre-existing illnesses risks total policy repudiation and claim forfeiture.",
+            compliantScript:
+              "Mdm. Tan, under Singapore law, you must fully declare all pre-existing conditions. The insurer will underwrite the policy accurately so you are guaranteed legitimate coverage without claim disputes later.",
+          },
+        ],
+        suggestedAnswers: [
+          {
+            questionOrObjection: "Pre-existing Medical Condition Duty of Disclosure",
+            suggestedResponse:
+              "Mdm. Tan, it is critical that we declare all past medical histories accurately under the Insurance Act. While pre-existing conditions may have waiting periods or exclusions, full honesty guarantees that your valid claims will never be contested.",
+            cheatSheetBullet: "Enforce Section 25(5) Insurance Act: Always disclose all past diagnoses and treatments.",
+          },
+        ],
+        timestamp,
+      };
+    }
+
     // Predatory trigger detection (Singapore MAS Fair Dealing Violations)
     if (
       lower.includes("guaranteed profit") ||
@@ -268,6 +327,19 @@ Output JSON format strictly in English:
             triggerSnippet: snippet,
             explanation:
               "Promised guaranteed high investment returns without disclosing market volatility, capital risks, or front-end acquisition charges under MAS Notice FAA-N03.",
+          },
+        ],
+        auditedQnAs: [
+          {
+            clientQuestion: "Asked about investment return guarantees and safety",
+            advisorAnswer: "Promised risk-free returns or urged immediate signing without reading terms",
+            isCompliant: false,
+            flag: "YELLOW",
+            topic: "GUARANTEED_RETURN",
+            regulatoryNotice: "Section 26 Financial Advisers Act (FAA)",
+            explanation: "Investment-linked returns must never be represented as capital-guaranteed.",
+            compliantScript:
+              "Mdm. Tan, investment-linked policies fluctuate with financial markets. Your insurance protection is secured, but cash value depends on fund performance.",
           },
         ],
         suggestedAnswers: [

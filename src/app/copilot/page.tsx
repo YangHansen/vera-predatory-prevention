@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Mic,
-  MicOff,
   AlertTriangle,
   ShieldCheck,
   Sparkles,
@@ -16,35 +15,50 @@ import {
   CheckCircle2,
   Clock,
   Trash2,
-  Play,
-  Pause,
   Send,
   Square,
-  Volume2,
+  QrCode,
+  MessageSquare,
+  X,
+  ExternalLink,
+  Copy,
+  Check,
 } from "lucide-react";
-import { CopilotAnalysisResult } from "@/types";
+import type { CopilotAnalysisResult } from "@/types";
 import { SpeechListener } from "@/components/copilot/SpeechListener";
 
 const BATCH_INTERVAL_SECONDS = 60;
 
 const SAMPLE_SCENARIOS = [
   {
-    id: "predatory_1",
-    label: "🚨 High-Pressure & Deceptive Return Guarantee",
+    id: "predatory_full",
+    label: "🚨 Predatory Pitch & Deceptive Return Guarantee",
     type: "aggressive",
-    text: "Mdm. Tan, this investment-linked policy is guaranteed to give you 25% returns every year with zero risk. You must sign right now before the quota closes!",
+    text: "Listen, I shouldn't even be showing you this plan today because it's technically reserved for our high net worth VIP clients, but I can tell you care deeply about your family's safety. Look around. Accidents happen in a split second, and without this specific policy, one unexpected medical diagnosis or tragedy will wipe out your life savings overnight. You don't want to leave your family broke and evicted while they're grieving, do you? That's where our Ultimate Legacy Shield comes in. This isn't just basic insurance—it is a guaranteed, risk-free wealth accelerator. While the stock market crashes, this plan builds cash value at a fixed return that outpaces inflation every single year. You are essentially getting free, total protection while building guaranteed wealth. Now, the fine print is standard legal fluff—nothing you need to worry about. We cover virtually everything. Sure, there are standard minor conditions, but trust me, everybody gets approved today. Here's the catch: this tier discount and waived sign-up fee expire the moment I walk out that door. The rate jumps by 40% tomorrow. You don't need to read through all 50 pages of boilerplate today, just sign line 14 right here.",
   },
   {
-    id: "disclosure_2",
-    label: "⚠️ Concealing Acquisition Costs & Waiting Periods",
-    type: "warning",
-    text: "Don't worry about the 15% surrender charge or the 12-month pre-existing condition moratorium—those are just standard legal fine print. Just sign here.",
+    id: "qna_pre_existing",
+    label: "💬 Client Q&A: Pre-Existing Condition Non-Disclosure",
+    type: "qna",
+    text: `Advisor: "Mdm. Tan, this Comprehensive Health Shield will cover all your future medical treatments and hospital ward charges seamlessly."
+Client: "That sounds good, but I had mild hypertension and high cholesterol diagnosed 2 years ago. Will the policy still cover that, and do I need to declare it?"
+Advisor: "Don't worry about it. As long as you haven't been hospitalized overnight in the last 12 months, you don't even need to declare it on the form. Just leave that section blank so we don't delay your approval."`,
   },
   {
-    id: "compliant_3",
-    label: "✅ MAS Fair Dealing Compliant Advisory Pitch",
+    id: "qna_surrender",
+    label: "💬 Client Q&A: Concealing Surrender Charges",
+    type: "qna",
+    text: `Advisor: "This wealth builder plan will outpace fixed deposit rates easily."
+Client: "What happens if my son needs money for university in year 2 or 3? Can I withdraw my savings without penalty?"
+Advisor: "Yes, absolutely! You can withdraw your money anytime you want with zero penalty or deduction. It functions just like an everyday bank account with high interest."`,
+  },
+  {
+    id: "compliant_full",
+    label: "✅ Compliant MAS Pitch & Honest Q&A Disclosure",
     type: "compliant",
-    text: "Mdm. Tan, this S$450 monthly premium provides peace of mind with a guaranteed annuity starting at age 62 and S$250,000 protection for your family. Please note that pre-existing medical conditions require a 12-month waiting period before full coverage takes effect.",
+    text: `Advisor: "Mdm. Tan, this S$450 monthly premium provides peace of mind with a guaranteed annuity starting at age 62 and S$250,000 protection for your family. Please note that pre-existing medical conditions require a 12-month waiting period before full coverage takes effect."
+Client: "I had hypertension diagnosed 2 years ago. Is that considered pre-existing?"
+Advisor: "Yes, Mdm. Tan, under Section 25(5) of the Insurance Act, we must fully declare all past diagnoses on the application. The underwriter will review it, and after the 12-month waiting period, you will have legitimate coverage without any claim disputes later."`,
   },
 ];
 
@@ -61,6 +75,17 @@ export default function CopilotTestPage() {
   const [secondsRemaining, setSecondsRemaining] = useState(BATCH_INTERVAL_SECONDS);
   const [isTimerActive, setIsTimerActive] = useState(true);
   const [lastAuditTime, setLastAuditTime] = useState<string | null>(null);
+
+  // QR Hand-off Modal State
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [qrData, setQrData] = useState<{
+    sessionId: string;
+    qrCodeDataUrl?: string;
+    customerUrl?: string;
+    customerName?: string;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Ref to access current text in timer callback without stale closure
   const inputTextRef = useRef(inputText);
@@ -81,7 +106,7 @@ export default function CopilotTestPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: "sess_copilot_playground_sg",
+          sessionId: qrData?.sessionId || "sess_copilot_playground_sg",
           text,
         }),
       });
@@ -98,9 +123,9 @@ export default function CopilotTestPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [qrData?.sessionId]);
 
-  // Stop Listening and Send Immediately
+  // Stop listening and immediately audit buffered speech
   const handleStopAndSend = useCallback(() => {
     let textToSend = inputTextRef.current.trim();
     if (interimTranscript.trim().length > 0) {
@@ -117,7 +142,7 @@ export default function CopilotTestPage() {
     }
   }, [interimTranscript, handleAnalyze]);
 
-  // 60-Second Batch Interval Effect (ONLY counts down when microphone is actively listening)
+  // 60-Second Batch Interval Effect
   useEffect(() => {
     if (!isListening || !isTimerActive) {
       setSecondsRemaining(BATCH_INTERVAL_SECONDS);
@@ -139,7 +164,7 @@ export default function CopilotTestPage() {
     return () => clearInterval(interval);
   }, [isListening, isTimerActive, handleAnalyze]);
 
-  // Handle incoming live speech transcript (appends directly to text buffer)
+  // Handle incoming live speech transcript
   const handleSpeechTranscript = useCallback((newText: string) => {
     setInputText((prev) => {
       const trimmed = prev.trim();
@@ -148,19 +173,62 @@ export default function CopilotTestPage() {
     });
   }, []);
 
+  // Open QR Hand-off Modal & Initialize Session
+  const handleOpenQrModal = async () => {
+    setShowQrModal(true);
+    setCopiedLink(false);
+
+    if (qrData) return; // Already generated
+
+    try {
+      setQrLoading(true);
+      const res = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent_andi_sg01",
+          customerName: "Mdm. Tan",
+          customerPhone: "+65 9123 4567",
+          policyId: "pol_retiresafe_2026",
+          baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.session) {
+        setQrData({
+          sessionId: data.session.id,
+          qrCodeDataUrl: data.session.qrCodeDataUrl,
+          customerUrl: data.session.customerUrl,
+          customerName: data.session.customerName,
+        });
+      }
+    } catch (e) {
+      console.error("Failed to generate QR session:", e);
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (qrData?.customerUrl) {
+      navigator.clipboard.writeText(qrData.customerUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
+  };
+
   // Load a quick sample scenario into the dialogue buffer
   const handleSelectScenario = (scenarioText: string) => {
     setInputText(scenarioText);
     setResult(null);
   };
 
-  // Calculate percentage of 60s elapsed for progress bar
   const progressPercent = ((BATCH_INTERVAL_SECONDS - secondsRemaining) / BATCH_INTERVAL_SECONDS) * 100;
   const hasDialogue = inputText.trim().length > 0;
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
-      {/* Navigation */}
+      {/* Navigation & Header Actions */}
       <div className="flex items-center justify-between mb-6">
         <Link
           href="/"
@@ -169,7 +237,16 @@ export default function CopilotTestPage() {
           <ArrowLeft className="w-4 h-4" />
           <span>Back to API Dashboard</span>
         </Link>
-        <span className="text-xs font-mono font-medium text-slate-400">FR-02: AI Sales Copilot Interface</span>
+
+        {/* Hand-off to Client Button */}
+        <button
+          type="button"
+          onClick={handleOpenQrModal}
+          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
+        >
+          <QrCode className="w-4 h-4" />
+          <span>📱 Hand-off to Client (QR Code)</span>
+        </button>
       </div>
 
       {/* Main Header */}
@@ -185,7 +262,7 @@ export default function CopilotTestPage() {
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-slate-500">
-              Listens to meeting speech via Google Cloud / Web Speech STT, transcribes live into the dialogue buffer, and audits compliance every 60s with Google Gemini.
+              Listens to meeting speech via Google Gemini Multimodal STT, transcribes live into the dialogue buffer, and audits pitch & client Q&A every 60s under MAS Fair Dealing standards.
             </p>
           </div>
 
@@ -203,7 +280,7 @@ export default function CopilotTestPage() {
         {/* Left Column: Unified Advisory Speech & Control Center */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between space-y-5">
           <div className="space-y-4">
-            {/* 1. Unified Control Bar (Aligned Mic Button + 60s Timer + Send Button) */}
+            {/* 1. Unified Control Bar */}
             <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 shadow-sm space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 {/* Single Aligned Mic Toggle Button */}
@@ -267,28 +344,16 @@ export default function CopilotTestPage() {
                 </button>
               </div>
 
-              {/* 60s Batch Timer Progress Bar (Only advances actively when there is text or listening) */}
+              {/* 60s Batch Timer Progress Bar */}
               <div className="pt-2 border-t border-slate-800 space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-slate-300">
                   <div className="flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-blue-400" />
                     <span>60-Second Auto-Audit Batch Timer:</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-[11px] bg-slate-800 px-2 py-0.5 rounded text-blue-300">
-                      {isListening
-                        ? `${secondsRemaining}s remaining`
-                        : "Mic idle (Timer reset to 60s)"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsTimerActive(!isTimerActive)}
-                      className="text-slate-400 hover:text-white"
-                      title={isTimerActive ? "Pause timer" : "Resume timer"}
-                    >
-                      {isTimerActive ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3 text-emerald-400" />}
-                    </button>
-                  </div>
+                  <span className="font-mono font-bold text-blue-400">
+                    {isListening ? `${secondsRemaining}s remaining` : "Timer paused (Mic idle)"}
+                  </span>
                 </div>
 
                 <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
@@ -300,20 +365,21 @@ export default function CopilotTestPage() {
               </div>
             </div>
 
-            {/* 2. SpeechListener Audio Level Visualizer & Interim Speech Bubble */}
+            {/* 2. SpeechListener Audio Visualizer */}
             <SpeechListener
               onTranscript={handleSpeechTranscript}
               isListening={isListening}
               onToggleListening={setIsListening}
               interimTranscript={interimTranscript}
               setInterimTranscript={setInterimTranscript}
+              engineMode="cloud"
             />
 
-            {/* 3. Meeting Dialogue Textarea (Actual Transcribed Text Appears Here) */}
+            {/* 3. Meeting Dialogue Textarea */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-semibold text-slate-700">
-                  Meeting Dialogue Buffer (Transcribed Text):
+                  Meeting Dialogue Buffer (Pitch & Client Q&A):
                 </label>
                 {hasDialogue && (
                   <button
@@ -334,11 +400,11 @@ export default function CopilotTestPage() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 className="w-full text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed"
-                placeholder="Spoken words from your microphone will transcribe and appear here directly..."
+                placeholder="Spoken words or client Q&A will transcribe and appear here directly..."
               />
             </div>
 
-            {/* 4. Quick Sample Scenarios (Click to Load) */}
+            {/* 4. Quick Sample Scenarios */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Or Load a Test Scenario:
@@ -369,7 +435,7 @@ export default function CopilotTestPage() {
           </div>
         </div>
 
-        {/* Right Column: Real-time Copilot Screen (Dark HUD Mode for Field Advisor) */}
+        {/* Right Column: Real-time Copilot Screen (Dark HUD Mode) */}
         <div className="bg-slate-900 bg-gradient-to-b from-slate-900 to-slate-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col justify-between border border-slate-800">
           <div>
             <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
@@ -419,6 +485,81 @@ export default function CopilotTestPage() {
                     </span>
                   </div>
                 </div>
+
+                {/* Way B: Conversational Q&A Audit Section */}
+                {result.auditedQnAs && result.auditedQnAs.length > 0 && (
+                  <div className="p-4 bg-slate-800/90 border border-slate-700 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider">
+                        <MessageSquare className="w-4 h-4 text-indigo-400" />
+                        <span>Client Q&A Compliance Audit:</span>
+                      </div>
+                      <span className="text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">
+                        Speaker-Turn Analysis
+                      </span>
+                    </div>
+
+                    {result.auditedQnAs.map((qna, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl border space-y-2 text-xs ${
+                          qna.isCompliant
+                            ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-200"
+                            : "bg-rose-950/40 border-rose-800/60 text-rose-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Topic: {qna.topic || "Q&A"}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase ${
+                              qna.isCompliant
+                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                                : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                            }`}
+                          >
+                            {qna.isCompliant ? "Compliant Advice" : "MAS Violation"}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-300 block">💬 Client Question:</span>
+                          <p className="text-white text-xs italic bg-slate-900/50 p-2 rounded-lg mt-0.5">
+                            &quot;{qna.clientQuestion}&quot;
+                          </p>
+                        </div>
+
+                        <div>
+                          <span className="text-[11px] font-semibold text-slate-300 block">🗣️ Advisor Answer:</span>
+                          <p className="text-slate-200 text-xs italic bg-slate-900/50 p-2 rounded-lg mt-0.5">
+                            &quot;{qna.advisorAnswer}&quot;
+                          </p>
+                        </div>
+
+                        {qna.regulatoryNotice && (
+                          <div className="text-[11px] font-mono text-amber-300 bg-amber-950/40 p-1.5 rounded-md">
+                            ⚠️ Reference: {qna.regulatoryNotice}
+                          </div>
+                        )}
+
+                        <p className="text-[11px] text-slate-300 leading-relaxed">{qna.explanation}</p>
+
+                        {qna.compliantScript && (
+                          <div className="pt-2 border-t border-slate-700/60 space-y-1">
+                            <span className="text-[11px] font-bold text-blue-300 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                              <span>Required Corrective Script:</span>
+                            </span>
+                            <p className="text-xs text-white bg-blue-950/50 p-2 rounded-lg border border-blue-800/40 italic">
+                              &quot;{qna.compliantScript}&quot;
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Detected Issues */}
                 {result.detectedIssues && result.detectedIssues.length > 0 && (
@@ -476,12 +617,83 @@ export default function CopilotTestPage() {
           <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Google Gemini 3.5 Flash-Lite
+              Google Gemini Multimodal Copilot
             </span>
             <span>MAS Fair Dealing 60s Batch Audit</span>
           </div>
         </div>
       </div>
+
+      {/* QR Code Hand-Off Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-2xl border border-slate-200 text-center space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-sm">Client QR Hand-Off</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Have Mdm. Tan scan this QR code with her personal smartphone camera to review the simplified policy and provide informed digital consent.
+            </p>
+
+            {qrLoading ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3">
+                <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                <span className="text-xs text-slate-500">Generating secure QR code...</span>
+              </div>
+            ) : qrData?.qrCodeDataUrl ? (
+              <div className="space-y-4">
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 inline-block mx-auto shadow-inner">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={qrData.qrCodeDataUrl}
+                    alt="Customer Session QR Code"
+                    className="w-48 h-48 mx-auto rounded-lg"
+                  />
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-600 bg-slate-100 py-1.5 px-2.5 rounded-lg truncate">
+                  Session: {qrData.sessionId}
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? "Copied!" : "Copy Link"}</span>
+                  </button>
+
+                  <Link
+                    href={`/customer/${qrData.sessionId}`}
+                    target="_blank"
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open in Tab</span>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="py-8 text-xs text-rose-500">
+                Failed to generate QR code. Please try again.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -54,11 +54,23 @@ export interface DetectedIssue {
   explanation: string;
 }
 
+export interface AuditedQnA {
+  clientQuestion: string;
+  advisorAnswer: string;
+  isCompliant: boolean;
+  flag: ComplianceFlag;
+  topic?: "PRE_EXISTING_CONDITION" | "SURRENDER_PENALTY" | "GUARANTEED_RETURN" | "PREMIUM_ESCALATION" | "OTHER";
+  regulatoryNotice?: string; // e.g. "Section 25(5) Insurance Act", "MAS Notice FAA-N03", "Section 26 FAA"
+  explanation: string;
+  compliantScript: string;
+}
+
 export interface CopilotAnalysisResult {
   isCompliant: boolean;
   warningFlags: ComplianceFlag; // GREEN, YELLOW, or RED
   confidenceScore: number; // e.g. 0.85
   detectedIssues: DetectedIssue[];
+  auditedQnAs?: AuditedQnA[];
   suggestedAnswers: {
     questionOrObjection: string;
     suggestedResponse: string;
