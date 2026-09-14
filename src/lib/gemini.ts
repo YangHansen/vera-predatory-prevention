@@ -153,6 +153,95 @@ Output JSON format strictly in English:
     return this.mockDialogueAnalysis(dialogueSnippet, timestamp);
   }
 
+  /**
+   * Transcribes speech audio using Google Gemini Multimodal Audio STT (FR-01, FR-02).
+   */
+  static async transcribeAudio(
+    audioBase64: string,
+    mimeType = "audio/webm"
+  ): Promise<{ transcript: string; engine: "google-gemini-cloud" | "google-cloud-speech" | "mock" }> {
+    if (!this.isConfigured() || !audioBase64) {
+      return {
+        transcript: "",
+        engine: "mock",
+      };
+    }
+
+    const cleanBase64 = audioBase64.replace(/^data:audio\/[a-z0-9\-]+;base64,/, "");
+    // Clean mime type to supported format
+    const normalizedMime = mimeType.includes("wav")
+      ? "audio/wav"
+      : mimeType.includes("mp4")
+      ? "audio/mp4"
+      : "audio/webm";
+
+    const defaultModels = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"];
+    const preferredModel = process.env.GEMINI_TRANSCRIBE_MODEL;
+    const modelsToTry = preferredModel
+      ? [preferredModel, ...defaultModels.filter((m) => m !== preferredModel)]
+      : defaultModels;
+
+    for (const model of modelsToTry) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: "Transcribe ONLY human speech verbatim in English with accurate punctuation. If the audio is silent or contains no distinct words, reply EMPTY.",
+                    },
+                    {
+                      inlineData: {
+                        mimeType: normalizedMime,
+                        data: cleanBase64,
+                      },
+                    },
+                  ],
+                },
+              ],
+              generationConfig: {
+                temperature: 0.0,
+              },
+            }),
+          }
+        );
+
+        if (res.ok) {
+          const data = await res.json();
+          let transcript = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+          transcript = transcript.replace(/^["']|["']$/g, "").trim();
+
+          const lower = transcript.toLowerCase();
+          if (
+            transcript.length > 0 &&
+            !lower.includes("no speech") &&
+            !lower.includes("empty") &&
+            lower !== "no, no." &&
+            lower !== "no."
+          ) {
+            return {
+              transcript,
+              engine: "google-gemini-cloud",
+            };
+          }
+        }
+      } catch (err) {
+        console.warn(`Gemini audio STT failed with model ${model}:`, err);
+      }
+    }
+
+    return {
+      transcript: "",
+      engine: "mock",
+    };
+  }
+
   private static mockDialogueAnalysis(snippet: string, timestamp: string): CopilotAnalysisResult {
     const lower = snippet.toLowerCase();
 
