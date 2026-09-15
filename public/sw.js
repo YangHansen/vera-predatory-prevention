@@ -1,4 +1,4 @@
-const CACHE_NAME = "vera-pwa-cache-v1";
+const CACHE_NAME = "vera-pwa-cache-v2";
 const OFFLINE_URL = "/offline.html";
 
 const STATIC_ASSETS = [
@@ -36,8 +36,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
-  // Don't intercept API requests with stale cache; let API handle or fail cleanly for offline detection
-  if (request.url.includes("/api/")) {
+  // Don't intercept API requests or Next.js chunks with stale cache
+  if (request.url.includes("/api/") || request.url.includes("/_next/")) {
     return;
   }
 

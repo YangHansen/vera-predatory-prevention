@@ -88,7 +88,7 @@ export function SpeechListener({
   onToggleListening,
   interimTranscript,
   setInterimTranscript,
-  engineMode = "cloud",
+  engineMode = "browser",
   onEngineModeChange,
 }: SpeechListenerProps) {
   const [selectedEngine, setSelectedEngine] = useState<SttEngineMode>(engineMode);
@@ -258,14 +258,19 @@ export function SpeechListener({
       recognition.onerror = (event: any) => {
         if (event.error === "no-speech") return;
         if (event.error === "not-allowed") {
-          setErrorMsg("Microphone permission denied.");
+          setErrorMsg("Microphone permission denied in browser settings.");
           onToggleListeningRef.current(false);
+          return;
+        }
+        if (event.error === "network" || event.error === "service-not-allowed" || event.error === "audio-capture") {
+          console.warn("Web Speech network/service issue, falling back to Gemini Cloud STT:", event.error);
+          setSelectedEngine("cloud");
         }
       };
 
       recognition.onend = () => {
         // Immediate restart with zero dead-zone if still listening
-        if (isListeningRef.current) {
+        if (isListeningRef.current && recognitionRef.current) {
           try {
             recognition.start();
           } catch {}

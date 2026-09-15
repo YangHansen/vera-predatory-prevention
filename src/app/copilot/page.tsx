@@ -23,8 +23,9 @@ import {
   ExternalLink,
   Copy,
   Check,
+  BrainCircuit,
 } from "lucide-react";
-import type { CopilotAnalysisResult } from "@/types";
+import type { CopilotAnalysisResult, ConfusionEvent } from "@/types";
 import { SpeechListener } from "@/components/copilot/SpeechListener";
 
 const BATCH_INTERVAL_SECONDS = 60;
@@ -87,11 +88,122 @@ export default function CopilotTestPage() {
   } | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // FR-05 Mandatory Privacy Disclosure Script State
+  const [privacyScriptRead, setPrivacyScriptRead] = useState<boolean>(false);
+
+  // Real-time client confusion telemetry from paired screen
+  const [clientConfusionEvents, setClientConfusionEvents] = useState<ConfusionEvent[]>([]);
+
   // Ref to access current text in timer callback without stale closure
   const inputTextRef = useRef(inputText);
   useEffect(() => {
     inputTextRef.current = inputText;
   }, [inputText]);
+
+  // Sync live dialogue buffer to server session in real-time
+  const syncDialogueToSession = useCallback((text: string) => {
+    const activeId =
+      qrData?.sessionId ||
+      (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null);
+    if (!activeId) return;
+
+    fetch(`/api/session/${activeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dialogueBuffer: text }),
+    }).catch(() => {});
+  }, [qrData?.sessionId]);
+
+  // Sync dialogue whenever inputText or interimTranscript changes
+  useEffect(() => {
+    const combined = interimTranscript.trim()
+      ? (inputText ? `${inputText} ${interimTranscript.trim()}` : interimTranscript.trim())
+      : inputText;
+
+    const timer = setTimeout(() => {
+      syncDialogueToSession(combined);
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [inputText, interimTranscript, syncDialogueToSession]);
+
+  // Polling to sync client screen confusion events in real-time (every 1s)
+  useEffect(() => {
+    const activeId =
+      qrData?.sessionId ||
+      (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null);
+    if (!activeId) return;
+
+    const pollConfusion = async () => {
+      try {
+        const res = await fetch(`/api/session/${activeId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.session?.livenessTelemetry?.confusionEvents) {
+            setClientConfusionEvents(data.session.livenessTelemetry.confusionEvents);
+          }
+        }
+      } catch (e) {
+        // ignore network blips
+      }
+    };
+
+    const interval = setInterval(pollConfusion, 1000);
+    return () => clearInterval(interval);
+  }, [qrData?.sessionId]);
+
+  // Auto-initialize or restore active session on mount so copilot and client screen are always paired
+  useEffect(() => {
+    async function initSession() {
+      try {
+        const savedId = typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null;
+        if (savedId) {
+          const checkRes = await fetch(`/api/session/${savedId}`);
+          if (checkRes.ok) {
+            const data = await checkRes.json();
+            if (data.success && data.session) {
+              setQrData({
+                sessionId: data.session.id,
+                qrCodeDataUrl: data.session.qrCodeDataUrl,
+                customerUrl: data.session.customerUrl,
+                customerName: data.session.customerName,
+              });
+              return;
+            }
+          }
+        }
+
+        // Create fresh session if no saved session
+        const res = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agentId: "agent_andi_sg01",
+            customerName: "Mdm. Tan",
+            customerPhone: "+65 9123 4567",
+            policyId: "pol_retiresafe_2026",
+            baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+          }),
+        });
+        const createData = await res.json();
+        if (createData.success && createData.session) {
+          setQrData({
+            sessionId: createData.session.id,
+            qrCodeDataUrl: createData.session.qrCodeDataUrl,
+            customerUrl: createData.session.customerUrl,
+            customerName: createData.session.customerName,
+          });
+          if (typeof window !== "undefined") {
+            localStorage.setItem("vera_copilot_session_id", createData.session.id);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to auto-init session:", e);
+      }
+    }
+
+    initSession();
+  }, []);
 
   // Main Audit function with Gemini
   const handleAnalyze = useCallback(async (textToAnalyze?: string) => {
@@ -101,12 +213,14 @@ export default function CopilotTestPage() {
     setLoading(true);
     setError(null);
 
+    const activeSessionId = qrData?.sessionId || (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null) || "sess_copilot_playground_sg";
+
     try {
       const res = await fetch("/api/copilot/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: qrData?.sessionId || "sess_copilot_playground_sg",
+          sessionId: activeSessionId,
           text,
         }),
       });
@@ -168,10 +282,11 @@ export default function CopilotTestPage() {
   const handleSpeechTranscript = useCallback((newText: string) => {
     setInputText((prev) => {
       const trimmed = prev.trim();
-      if (!trimmed) return newText;
-      return `${trimmed} ${newText}`;
+      const updated = !trimmed ? newText : `${trimmed} ${newText}`;
+      syncDialogueToSession(updated);
+      return updated;
     });
-  }, []);
+  }, [syncDialogueToSession]);
 
   // Open QR Hand-off Modal & Initialize Session
   const handleOpenQrModal = async () => {
@@ -209,6 +324,40 @@ export default function CopilotTestPage() {
     }
   };
 
+  const handleCreateNewSession = async () => {
+    try {
+      setQrLoading(true);
+      const res = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent_andi_sg01",
+          customerName: "Mdm. Tan",
+          customerPhone: "+65 9123 4567",
+          policyId: "pol_retiresafe_2026",
+          baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.session) {
+        setQrData({
+          sessionId: data.session.id,
+          qrCodeDataUrl: data.session.qrCodeDataUrl,
+          customerUrl: data.session.customerUrl,
+          customerName: data.session.customerName,
+        });
+        if (typeof window !== "undefined") {
+          localStorage.setItem("vera_copilot_session_id", data.session.id);
+        }
+        setResult(null);
+      }
+    } catch (e) {
+      console.error("Failed to create new session:", e);
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
   const handleCopyLink = () => {
     if (qrData?.customerUrl) {
       navigator.clipboard.writeText(qrData.customerUrl);
@@ -217,10 +366,11 @@ export default function CopilotTestPage() {
     }
   };
 
-  // Load a quick sample scenario into the dialogue buffer
+  // Load a quick sample scenario into the dialogue buffer and audit immediately
   const handleSelectScenario = (scenarioText: string) => {
     setInputText(scenarioText);
-    setResult(null);
+    syncDialogueToSession(scenarioText);
+    handleAnalyze(scenarioText);
   };
 
   const progressPercent = ((BATCH_INTERVAL_SECONDS - secondsRemaining) / BATCH_INTERVAL_SECONDS) * 100;
@@ -229,7 +379,7 @@ export default function CopilotTestPage() {
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
       {/* Navigation & Header Actions */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link
           href="/"
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-3.5 py-2 rounded-xl shadow-xs transition-colors"
@@ -238,15 +388,48 @@ export default function CopilotTestPage() {
           <span>Back to API Dashboard</span>
         </Link>
 
-        {/* Hand-off to Client Button */}
-        <button
-          type="button"
-          onClick={handleOpenQrModal}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
-        >
-          <QrCode className="w-4 h-4" />
-          <span>📱 Hand-off to Client (QR Code)</span>
-        </button>
+        {/* Client Session Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {qrData?.sessionId && (
+            <span className="text-[11px] font-mono text-slate-500 bg-white border border-slate-200 px-2.5 py-2 rounded-xl hidden sm:inline-block shadow-xs">
+              Session: <span className="font-bold text-slate-800">{qrData.sessionId.slice(0, 16)}...</span>
+            </span>
+          )}
+
+          {/* Direct Open Client Screen Button */}
+          {qrData?.customerUrl && (
+            <a
+              href={qrData.customerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open Client Screen</span>
+            </a>
+          )}
+
+          {/* Hand-off to Client Button (QR Code) */}
+          <button
+            type="button"
+            onClick={handleOpenQrModal}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>📱 QR Code</span>
+          </button>
+
+          {/* Reset / New Session */}
+          <button
+            type="button"
+            onClick={handleCreateNewSession}
+            title="Start new linked client session"
+            className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 font-semibold text-xs px-3 py-2 rounded-xl shadow-xs transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">New Session</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Header */}
@@ -270,6 +453,50 @@ export default function CopilotTestPage() {
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white">
               <User className="w-3.5 h-3.5 text-blue-400" />
               Advisor: Andi (FC-1092)
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* FR-05 Mandatory Privacy Disclosure Gate (PRD Compliance) */}
+      <div className={`mb-6 rounded-3xl p-5 sm:p-6 transition-all border shadow-xs ${
+        privacyScriptRead
+          ? "bg-emerald-50/80 border-emerald-300"
+          : "bg-blue-50/90 border-blue-300 ring-2 ring-blue-200"
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1.5 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="p-1 bg-blue-100 text-blue-800 rounded-lg text-[11px] font-black uppercase tracking-wider">
+                Mandatory Script (FR-05)
+              </span>
+              <span className="text-xs font-bold text-slate-800">
+                Singapore PDPA & MAS Fair Dealing Disclosure Gate
+              </span>
+            </div>
+            <p className="text-xs text-slate-600">
+              Read the following mandatory privacy disclosure aloud to Mdm. Tan before initiating the product pitch:
+            </p>
+            <div className="p-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 italic leading-relaxed shadow-2xs font-medium">
+              &ldquo;Mdm. Tan, for your consumer protection under Singapore MAS Fair Dealing guidelines, our meeting audio is analyzed by AI in real time to ensure all policy disclosures are accurate. Please note that camera and facial video data on your mobile screen are processed strictly on your personal device and are <strong className="font-black text-slate-900 not-italic">never recorded, saved, or uploaded to any database</strong>.&rdquo;
+            </div>
+          </div>
+
+          <div className="shrink-0 flex sm:flex-col items-center sm:items-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPrivacyScriptRead((prev) => !prev)}
+              className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-xs ${
+                privacyScriptRead
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  : "bg-blue-600 hover:bg-blue-700 text-white hover:scale-105"
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{privacyScriptRead ? "Script Read & Confirmed" : "Mark as Read Aloud"}</span>
+            </button>
+            <span className="text-[10px] text-slate-500 font-mono">
+              {privacyScriptRead ? "Gate Status: Passed" : "Gate Status: Pending Read"}
             </span>
           </div>
         </div>
@@ -372,7 +599,7 @@ export default function CopilotTestPage() {
               onToggleListening={setIsListening}
               interimTranscript={interimTranscript}
               setInterimTranscript={setInterimTranscript}
-              engineMode="cloud"
+              engineMode="browser"
             />
 
             {/* 3. Meeting Dialogue Textarea */}
@@ -387,6 +614,7 @@ export default function CopilotTestPage() {
                     onClick={() => {
                       setInputText("");
                       setResult(null);
+                      syncDialogueToSession("");
                     }}
                     className="text-[11px] text-slate-400 hover:text-rose-600 flex items-center gap-1 transition-colors"
                   >
@@ -396,18 +624,90 @@ export default function CopilotTestPage() {
                 )}
               </div>
               <textarea
-                rows={5}
+                rows={4}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 className="w-full text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed"
-                placeholder="Spoken words or client Q&A will transcribe and appear here directly..."
+                placeholder="Spoken words or client Q&A will transcribe and appear here live..."
               />
+
+              {/* Quick One-Click Speech Simulation Pills for Easy Demonstration & Real-Time Sync */}
+              <div className="mt-2 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Quick Speech Simulation Pills (Live Sync to Client Screen):
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = 'Advisor: "Mdm. Tan, please note that pre-existing conditions like hypertension have a standard 12-month waiting period before full coverage activates."';
+                      setInputText(text);
+                      syncDialogueToSession(text);
+                      handleAnalyze(text);
+                    }}
+                    className="text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    💬 Speak: Waiting Period (Clause 4)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = 'Advisor: "Terminating or surrendering this policy within the first 36 months incurs an early surrender penalty of 15% on accumulated surrender value."';
+                      setInputText(text);
+                      syncDialogueToSession(text);
+                      handleAnalyze(text);
+                    }}
+                    className="text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    💬 Speak: Surrender Penalty (Clause 3)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = 'Advisor: "This policy provides a guaranteed monthly annuity payout starting at age 62 for 20 years, backed by Singapore statutory regulations."';
+                      setInputText(text);
+                      syncDialogueToSession(text);
+                      handleAnalyze(text);
+                    }}
+                    className="text-[10px] font-medium bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    💬 Speak: Annuity at 62 (Clause 1)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const text = 'Advisor: "Under Section 25(5) of the Insurance Act, you have a mandatory duty of disclosure to declare all past medical conditions honestly."';
+                      setInputText(text);
+                      syncDialogueToSession(text);
+                      handleAnalyze(text);
+                    }}
+                    className="text-[10px] font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 px-2.5 py-1 rounded-lg transition-colors"
+                  >
+                    💬 Speak: Section 25(5) Disclosure
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputText("");
+                      setResult(null);
+                      syncDialogueToSession("");
+                    }}
+                    className="text-[10px] font-medium bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 px-2 py-1 rounded-lg transition-colors"
+                  >
+                    🗑️ Clear (Silent Mode)
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* 4. Quick Sample Scenarios */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Or Load a Test Scenario:
+                Or Load Full Scenarios:
               </label>
               <div className="space-y-1.5">
                 {SAMPLE_SCENARIOS.map((s) => (
@@ -486,17 +786,105 @@ export default function CopilotTestPage() {
                   </div>
                 </div>
 
+                {/* Engine Source Transparency Badge */}
+                <div className="flex items-center justify-between px-3.5 py-2 bg-slate-950/70 border border-slate-700/60 rounded-xl text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    {result.auditEngine === "google-gemini-live" ? (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                        <span className="font-bold text-blue-300">Audit Source:</span>
+                        <span className="text-slate-200 font-mono text-[10px]">Google Gemini Cloud ({result.modelUsed || "gemini-2.5-flash"})</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="font-bold text-emerald-300">Audit Source:</span>
+                        <span className="text-slate-200 text-[10px]">{result.modelUsed || "Vera MAS Compliance Rules Engine (Offline Fallback)"}</span>
+                      </>
+                    )}
+                  </div>
+                  <span className={`text-[9px] font-mono px-2 py-0.5 rounded font-semibold ${
+                    result.auditEngine === "google-gemini-live"
+                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                      : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                  }`}>
+                    {result.auditEngine === "google-gemini-live" ? "Live GenAI" : "Offline Rule Engine"}
+                  </span>
+                </div>
+
+                {/* Mirrored Screen Sync Status Banner */}
+                {qrData?.sessionId && (
+                  <div className="p-3 bg-blue-950/60 border border-blue-800/60 rounded-xl flex items-center justify-between text-xs text-blue-200">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+                      <span className="font-semibold text-blue-100">Mirrored Screen Sync:</span>
+                      <span className="text-[11px] text-blue-300">
+                        {result.auditedQnAs?.[0]?.topic === "PRE_EXISTING_CONDITION"
+                          ? "Synced '12-Month Waiting Period' highlight to client's phone"
+                          : result.auditedQnAs?.[0]?.topic === "SURRENDER_PENALTY"
+                          ? "Synced 'Early Surrender Penalty' highlight to client's phone"
+                          : "Clause tags and disclosures synced to client's phone"}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono bg-blue-500/30 text-blue-200 px-2 py-0.5 rounded-md">
+                      Batch-Synced
+                    </span>
+                  </div>
+                )}
+
+                {/* Live Client Confusion & Hesitation Telemetry Banner */}
+                {clientConfusionEvents.length > 0 && (
+                  <div className="p-3.5 bg-amber-500/20 border border-amber-400/40 rounded-2xl flex items-start gap-2.5 text-xs text-amber-200 animate-fadeIn">
+                    <BrainCircuit className="w-5 h-5 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-amber-300">
+                          Client Hesitation / Confusion Flagged at Device:
+                        </span>
+                        <span className="text-[10px] font-mono bg-amber-400/20 text-amber-200 border border-amber-400/30 px-2 py-0.5 rounded-full">
+                          {clientConfusionEvents.length} {clientConfusionEvents.length === 1 ? "Event" : "Events"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-100/90 leading-relaxed">
+                        Client showed confusion during discussion of{" "}
+                        <strong className="text-white">
+                          {clientConfusionEvents[clientConfusionEvents.length - 1].activeTopic}
+                        </strong>{" "}
+                        at meeting time{" "}
+                        <span className="font-mono text-amber-300">
+                          {String(
+                            Math.floor(
+                              clientConfusionEvents[clientConfusionEvents.length - 1].relativeSeconds / 60
+                            )
+                          ).padStart(2, "0")}
+                          :
+                          {String(
+                            clientConfusionEvents[clientConfusionEvents.length - 1].relativeSeconds % 60
+                          ).padStart(2, "0")}
+                        </span>
+                        . Please pause to clarify this clause before closing.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Way B: Conversational Q&A Audit Section */}
                 {result.auditedQnAs && result.auditedQnAs.length > 0 && (
                   <div className="p-4 bg-slate-800/90 border border-slate-700 rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider">
                         <MessageSquare className="w-4 h-4 text-indigo-400" />
                         <span>Client Q&A Compliance Audit:</span>
                       </div>
-                      <span className="text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">
-                        Speaker-Turn Analysis
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">
+                          Speaker-Turn Analysis
+                        </span>
+                        <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>Mirrored to Client Screen</span>
+                        </span>
+                      </div>
                     </div>
 
                     {result.auditedQnAs.map((qna, idx) => (

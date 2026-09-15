@@ -42,3 +42,28 @@ export async function GET(
     });
   }
 }
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await req.json();
+
+    let updatedSession;
+    if (body.dialogueBuffer !== undefined) {
+      updatedSession = SessionStore.updateLiveDialogueBuffer(id, String(body.dialogueBuffer));
+    }
+
+    if (body.telemetry) {
+      updatedSession = SessionStore.recordLivenessTelemetry(id, body.telemetry);
+    }
+
+    return NextResponse.json({ success: true, session: updatedSession });
+  } catch (err: any) {
+    console.error("Failed to update telemetry:", err);
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  }
+}
+

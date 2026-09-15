@@ -129,8 +129,10 @@ export class SessionStore {
   }
 
   static addCopilotEvent(id: string, event: CopilotAnalysisResult): Session | undefined {
-    const session = this.getSession(id);
-    if (!session) return undefined;
+    let session = this.getSession(id);
+    if (!session) {
+      session = this.getOrCreateSession(id);
+    }
 
     session.copilotEvents.push(event);
     session.updatedAt = new Date().toISOString();
@@ -139,11 +141,53 @@ export class SessionStore {
     return session;
   }
 
+  static updateSyncedHighlight(
+    id: string,
+    highlight: {
+      topic: "WAITING_PERIOD" | "SURRENDER_PENALTY" | "GUARANTEED_RETURN" | "DUTY_OF_DISCLOSURE" | "COVERAGE" | "GENERAL";
+      clauseId?: string;
+      matchedText?: string;
+      advisorNote?: string;
+    }
+  ): Session | undefined {
+    let session = this.getSession(id);
+    if (!session) {
+      session = this.getOrCreateSession(id);
+    }
+
+    session.syncedHighlight = {
+      ...highlight,
+      highlightTimestamp: new Date().toISOString(),
+    };
+    session.updatedAt = new Date().toISOString();
+    sessions.set(id, session);
+    saveToDisk(sessions);
+    return session;
+  }
+
+  static updateLiveDialogueBuffer(id: string, text: string): Session | undefined {
+    let session = this.getSession(id);
+    if (!session) {
+      session = this.getOrCreateSession(id);
+    }
+
+    session.liveDialogueBuffer = text;
+    session.updatedAt = new Date().toISOString();
+    sessions.set(id, session);
+    saveToDisk(sessions);
+    return session;
+  }
+
   static recordLivenessTelemetry(id: string, telemetry: LivenessTelemetry): Session | undefined {
-    const session = this.getSession(id);
-    if (!session) return undefined;
+    let session = this.getSession(id);
+    if (!session) {
+      session = this.getOrCreateSession(id);
+    }
 
     session.livenessTelemetry = telemetry;
+    if (telemetry.confusionEvents && telemetry.confusionEvents.length > 0) {
+      session.confusionEvents = telemetry.confusionEvents;
+    }
     session.updatedAt = new Date().toISOString();
     sessions.set(id, session);
     saveToDisk(sessions);
