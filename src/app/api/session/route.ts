@@ -5,17 +5,22 @@ import { SessionStore } from "@/lib/session-store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { agentId, customerName, customerPhone, policyId } = body;
+    const { agentId, customerName, customerPhone, policyId, baseUrl: customBaseUrl } = body;
 
-    // Detect request origin if not specified in env
-    const origin = req.headers.get("origin") || req.nextUrl.origin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    // Detect request origin, respecting client customBaseUrl or headers
+    const detectedOrigin =
+      customBaseUrl ||
+      req.headers.get("origin") ||
+      req.nextUrl.origin ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "http://localhost:3000";
 
     const session = SessionStore.createSession({
-      agentId: agentId || "agent_andi_01",
-      customerName: customerName || "Ibu Siti",
-      customerPhone: customerPhone || "081234567890",
+      agentId: agentId || "agent_andi_sg01",
+      customerName: customerName || "Mdm. Tan",
+      customerPhone: customerPhone || "+65 9123 4567",
       policyId: policyId || "pol_retiresafe_2026",
-      baseUrl: origin,
+      baseUrl: detectedOrigin,
     });
 
     // Generate QR Code Data URL for the customer hand-off link

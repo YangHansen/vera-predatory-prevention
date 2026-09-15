@@ -44,6 +44,12 @@ async function runTests() {
   console.log(`✅ Compliant Advisory Dialogue Test:`);
   console.log(`   - Compliant: ${analysis2.isCompliant} (Flag: ${analysis2.warningFlags})`);
 
+  // Case C: Audio Transcription Test
+  console.log("\n   Testing Audio Speech-to-Text Transcription Engine...");
+  const mockAudioBase64 = "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwH/////////FUmpZpkq17GDD0JAe5CQEZY=";
+  const transcribeResult = await GeminiService.transcribeAudio(mockAudioBase64, "audio/webm");
+  console.log(`✅ Audio Transcription Result (Engine: ${transcribeResult.engine})`);
+
   // 4. Test Branching Logic Engine (FR-06)
   console.log("\n4️⃣ Testing Branching Logic Engine (Fast-Track vs Manual Review)...");
   
