@@ -24,9 +24,25 @@ import {
   Copy,
   Check,
   BrainCircuit,
+  Building2,
+  FileCheck2,
+  Award,
+  Download,
+  Printer,
+  ChevronDown,
+  UserCheck,
+  Scan,
 } from "lucide-react";
-import type { CopilotAnalysisResult, ConfusionEvent } from "@/types";
+import type {
+  CopilotAnalysisResult,
+  ConfusionEvent,
+  AgentAccount,
+  Policy,
+  ComplianceCertificate,
+  LivenessTelemetry,
+} from "@/types";
 import { SpeechListener } from "@/components/copilot/SpeechListener";
+import { DUMMY_POLICIES } from "@/lib/dummy-data";
 
 const BATCH_INTERVAL_SECONDS = 60;
 
@@ -64,13 +80,19 @@ Advisor: "Yes, Mdm. Tan, under Section 25(5) of the Insurance Act, we must fully
 ];
 
 export default function CopilotTestPage() {
-  // Dialogue buffer starts EMPTY by default so no placeholder is sent repeatedly
+  // Dialogue buffer
   const [inputText, setInputText] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CopilotAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Available Agents and Policies
+  const [agentsList, setAgentsList] = useState<AgentAccount[]>([]);
+  const [policiesList, setPoliciesList] = useState<Policy[]>(DUMMY_POLICIES);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("agt_andi_01");
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string>("pol_retiresafe_sg");
 
   // 1-Minute Interval Timer State
   const [secondsRemaining, setSecondsRemaining] = useState(BATCH_INTERVAL_SECONDS);
@@ -88,17 +110,61 @@ export default function CopilotTestPage() {
   } | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // FR-05 Mandatory Privacy Disclosure Script State
+  // MAS Compliance Certificate Receipt Modal
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [certificateData, setCertificateData] = useState<ComplianceCertificate | null>(null);
+  const [certLoading, setCertLoading] = useState(false);
+
+  // Mandatory Privacy Disclosure Script State
   const [privacyScriptRead, setPrivacyScriptRead] = useState<boolean>(false);
 
-  // Real-time client confusion telemetry from paired screen
+  // Real-time client confusion and gesture telemetry from paired screen
   const [clientConfusionEvents, setClientConfusionEvents] = useState<ConfusionEvent[]>([]);
+  const [clientLiveness, setClientLiveness] = useState<LivenessTelemetry | null>(null);
+  const [isSessionSigned, setIsSessionSigned] = useState<boolean>(false);
 
   // Ref to access current text in timer callback without stale closure
   const inputTextRef = useRef(inputText);
   useEffect(() => {
     inputTextRef.current = inputText;
   }, [inputText]);
+
+  // Fetch agents and policies on mount & check URL params
+  useEffect(() => {
+    async function loadCatalogAndAgents() {
+      try {
+        const [agentRes, policyRes] = await Promise.all([
+          fetch("/api/agents"),
+          fetch("/api/policies"),
+        ]);
+        if (agentRes.ok) {
+          const aData = await agentRes.json();
+          if (aData.success && Array.isArray(aData.agents)) {
+            setAgentsList(aData.agents);
+          }
+        }
+        if (policyRes.ok) {
+          const pData = await policyRes.json();
+          if (pData.success && Array.isArray(pData.policies)) {
+            setPoliciesList(pData.policies);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load catalog/agents:", e);
+      }
+    }
+
+    loadCatalogAndAgents();
+
+    // Check URL params for agentId or policyId
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlAgent = params.get("agentId");
+      const urlPolicy = params.get("policyId");
+      if (urlAgent) setSelectedAgentId(urlAgent);
+      if (urlPolicy) setSelectedPolicyId(urlPolicy);
+    }
+  }, []);
 
   // Sync live dialogue buffer to server session in real-time
   const syncDialogueToSession = useCallback((text: string) => {
@@ -127,7 +193,7 @@ export default function CopilotTestPage() {
     return () => clearTimeout(timer);
   }, [inputText, interimTranscript, syncDialogueToSession]);
 
-  // Polling to sync client screen confusion events in real-time (every 1s)
+  // Polling to sync client screen telemetry, gesture agreement, and signed status in real-time (every 1s)
   useEffect(() => {
     const activeId =
       qrData?.sessionId ||
@@ -139,8 +205,14 @@ export default function CopilotTestPage() {
         const res = await fetch(`/api/session/${activeId}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.session?.livenessTelemetry?.confusionEvents) {
-            setClientConfusionEvents(data.session.livenessTelemetry.confusionEvents);
+          if (data.session?.livenessTelemetry) {
+            setClientLiveness(data.session.livenessTelemetry);
+            if (data.session.livenessTelemetry.confusionEvents) {
+              setClientConfusionEvents(data.session.livenessTelemetry.confusionEvents);
+            }
+          }
+          if (data.session?.status === "CONSENT_SIGNED" || data.session?.consentResult) {
+            setIsSessionSigned(true);
           }
         }
       } catch (e) {
@@ -152,7 +224,7 @@ export default function CopilotTestPage() {
     return () => clearInterval(interval);
   }, [qrData?.sessionId]);
 
-  // Auto-initialize or restore active session on mount so copilot and client screen are always paired
+  // Auto-initialize or restore active session on mount
   useEffect(() => {
     async function initSession() {
       try {
@@ -168,6 +240,9 @@ export default function CopilotTestPage() {
                 customerUrl: data.session.customerUrl,
                 customerName: data.session.customerName,
               });
+              if (data.session.policyId) setSelectedPolicyId(data.session.policyId);
+              if (data.session.agentId) setSelectedAgentId(data.session.agentId);
+              if (data.session.status === "CONSENT_SIGNED") setIsSessionSigned(true);
               return;
             }
           }
@@ -178,10 +253,10 @@ export default function CopilotTestPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            agentId: "agent_andi_sg01",
+            agentId: selectedAgentId,
             customerName: "Mdm. Tan",
             customerPhone: "+65 9123 4567",
-            policyId: "pol_retiresafe_2026",
+            policyId: selectedPolicyId,
             baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
           }),
         });
@@ -205,15 +280,43 @@ export default function CopilotTestPage() {
     initSession();
   }, []);
 
+  // Update session on server when advisor changes policy or agent
+  const handlePolicyChange = async (newPolicyId: string) => {
+    setSelectedPolicyId(newPolicyId);
+    const activeId = qrData?.sessionId || (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null);
+    if (activeId) {
+      await fetch(`/api/session/${activeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policyId: newPolicyId }),
+      }).catch(() => {});
+    }
+  };
+
+  const handleAgentChange = async (newAgentId: string) => {
+    setSelectedAgentId(newAgentId);
+    const activeId = qrData?.sessionId || (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null);
+    if (activeId) {
+      await fetch(`/api/session/${activeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId: newAgentId }),
+      }).catch(() => {});
+    }
+  };
+
   // Main Audit function with Gemini
   const handleAnalyze = useCallback(async (textToAnalyze?: string) => {
     const text = (textToAnalyze !== undefined ? textToAnalyze : inputTextRef.current).trim();
-    if (!text) return; // Never send empty text or placeholders
+    if (!text) return;
 
     setLoading(true);
     setError(null);
 
-    const activeSessionId = qrData?.sessionId || (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null) || "sess_copilot_playground_sg";
+    const activeSessionId =
+      qrData?.sessionId ||
+      (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null) ||
+      "sess_copilot_playground_sg";
 
     try {
       const res = await fetch("/api/copilot/analyze", {
@@ -222,6 +325,10 @@ export default function CopilotTestPage() {
         body: JSON.stringify({
           sessionId: activeSessionId,
           text,
+          context: {
+            agentId: selectedAgentId,
+            policyId: selectedPolicyId,
+          },
         }),
       });
 
@@ -237,7 +344,7 @@ export default function CopilotTestPage() {
     } finally {
       setLoading(false);
     }
-  }, [qrData?.sessionId]);
+  }, [qrData?.sessionId, selectedAgentId, selectedPolicyId]);
 
   // Stop listening and immediately audit buffered speech
   const handleStopAndSend = useCallback(() => {
@@ -278,11 +385,48 @@ export default function CopilotTestPage() {
     return () => clearInterval(interval);
   }, [isListening, isTimerActive, handleAnalyze]);
 
-  // Handle incoming live speech transcript
+  // Handle incoming live speech transcript with trailing overlap deduplication
   const handleSpeechTranscript = useCallback((newText: string) => {
+    const chunk = newText.trim();
+    if (!chunk) return;
+
     setInputText((prev) => {
       const trimmed = prev.trim();
-      const updated = !trimmed ? newText : `${trimmed} ${newText}`;
+      if (!trimmed) {
+        syncDialogueToSession(chunk);
+        return chunk;
+      }
+
+      // Check for exact duplicate tail
+      if (trimmed.toLowerCase().endsWith(chunk.toLowerCase())) {
+        return trimmed;
+      }
+
+      // Check for overlap of trailing words (e.g., if new chunk begins with the tail of trimmed text)
+      const prevWords = trimmed.split(/\s+/);
+      const chunkWords = chunk.split(/\s+/);
+      const maxOverlap = Math.min(prevWords.length, chunkWords.length);
+      let overlapCount = 0;
+
+      for (let n = maxOverlap; n > 0; n--) {
+        const prevTail = prevWords.slice(-n).join(" ").toLowerCase();
+        const chunkHead = chunkWords.slice(0, n).join(" ").toLowerCase();
+        if (prevTail === chunkHead) {
+          overlapCount = n;
+          break;
+        }
+      }
+
+      let textToAdd = chunk;
+      if (overlapCount > 0) {
+        textToAdd = chunkWords.slice(overlapCount).join(" ");
+      }
+
+      if (!textToAdd.trim()) {
+        return trimmed;
+      }
+
+      const updated = `${trimmed} ${textToAdd.trim()}`;
       syncDialogueToSession(updated);
       return updated;
     });
@@ -293,7 +437,7 @@ export default function CopilotTestPage() {
     setShowQrModal(true);
     setCopiedLink(false);
 
-    if (qrData) return; // Already generated
+    if (qrData) return;
 
     try {
       setQrLoading(true);
@@ -301,10 +445,10 @@ export default function CopilotTestPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          agentId: "agent_andi_sg01",
+          agentId: selectedAgentId,
           customerName: "Mdm. Tan",
           customerPhone: "+65 9123 4567",
-          policyId: "pol_retiresafe_2026",
+          policyId: selectedPolicyId,
           baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
         }),
       });
@@ -331,10 +475,10 @@ export default function CopilotTestPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          agentId: "agent_andi_sg01",
+          agentId: selectedAgentId,
           customerName: "Mdm. Tan",
           customerPhone: "+65 9123 4567",
-          policyId: "pol_retiresafe_2026",
+          policyId: selectedPolicyId,
           baseUrl: typeof window !== "undefined" ? window.location.origin : undefined,
         }),
       });
@@ -350,6 +494,7 @@ export default function CopilotTestPage() {
           localStorage.setItem("vera_copilot_session_id", data.session.id);
         }
         setResult(null);
+        setIsSessionSigned(false);
       }
     } catch (e) {
       console.error("Failed to create new session:", e);
@@ -366,34 +511,71 @@ export default function CopilotTestPage() {
     }
   };
 
-  // Load a quick sample scenario into the dialogue buffer and audit immediately
+  // Load Certificate / Receipt
+  const handleOpenCertificate = async () => {
+    const activeId = qrData?.sessionId || (typeof window !== "undefined" ? localStorage.getItem("vera_copilot_session_id") : null);
+    if (!activeId) return;
+
+    setShowCertificateModal(true);
+    setCertLoading(true);
+
+    try {
+      const res = await fetch(`/api/session/${activeId}/receipt`);
+      const data = await res.json();
+      if (data.success && data.certificate) {
+        setCertificateData(data.certificate);
+      }
+    } catch (e) {
+      console.error("Failed to fetch certificate:", e);
+    } finally {
+      setCertLoading(false);
+    }
+  };
+
   const handleSelectScenario = (scenarioText: string) => {
     setInputText(scenarioText);
     syncDialogueToSession(scenarioText);
     handleAnalyze(scenarioText);
   };
 
+  const activeAgent = agentsList.find((a) => a.id === selectedAgentId) || {
+    id: "agt_andi_01",
+    fullName: "Andi Wijaya, ChFC",
+    repNumber: "MAS-REP-882910",
+    agencyFirm: "Vera Financial Advisory Pte Ltd",
+    role: "SENIOR_ADVISOR",
+    complianceRating: 98.6,
+  };
+
+  const activePolicy = policiesList.find((p) => p.id === selectedPolicyId) || policiesList[0];
+
   const progressPercent = ((BATCH_INTERVAL_SECONDS - secondsRemaining) / BATCH_INTERVAL_SECONDS) * 100;
   const hasDialogue = inputText.trim().length > 0;
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
-      {/* Navigation & Header Actions */}
+      {/* Top Controls & Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <Link
           href="/"
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 px-3.5 py-2 rounded-xl shadow-xs transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to API Dashboard</span>
+          <span>Back to Dashboard</span>
         </Link>
 
-        {/* Client Session Controls */}
+        {/* Client Session & Hand-off Actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          {qrData?.sessionId && (
-            <span className="text-[11px] font-mono text-slate-500 bg-white border border-slate-200 px-2.5 py-2 rounded-xl hidden sm:inline-block shadow-xs">
-              Session: <span className="font-bold text-slate-800">{qrData.sessionId.slice(0, 16)}...</span>
-            </span>
+          {/* Certificate Action (if signed or for verification) */}
+          {isSessionSigned && (
+            <button
+              type="button"
+              onClick={handleOpenCertificate}
+              className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
+            >
+              <Award className="w-4 h-4" />
+              <span>MAS Audit Certificate</span>
+            </button>
           )}
 
           {/* Direct Open Client Screen Button */}
@@ -416,7 +598,7 @@ export default function CopilotTestPage() {
             className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-105"
           >
             <QrCode className="w-4 h-4" />
-            <span>📱 QR Code</span>
+            <span>QR Hand-Off</span>
           </button>
 
           {/* Reset / New Session */}
@@ -432,38 +614,107 @@ export default function CopilotTestPage() {
         </div>
       </div>
 
-      {/* Main Header */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Main Header & Branding */}
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-100">
           <div>
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2.5 mb-1.5">
               <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
                 <Zap className="w-5 h-5 text-amber-600" />
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-                AI Sales Copilot & Speech Listener
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                VERA AI Sales Copilot & Speech Listener
               </h1>
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                MAS Aligned
+              </span>
             </div>
             <p className="text-xs sm:text-sm text-slate-500">
-              Listens to meeting speech via Google Gemini Multimodal STT, transcribes live into the dialogue buffer, and audits pitch & client Q&A every 60s under MAS Fair Dealing standards.
+              Listens to advisory speech in real-time, transcribes live into the dialogue buffer, and audits pitch & client Q&A every 60s under MAS Fair Dealing standards.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-900 text-white">
-              <User className="w-3.5 h-3.5 text-blue-400" />
-              Advisor: Andi (FC-1092)
-            </span>
+          {/* Active Advisor Card */}
+          <div className="flex items-center gap-3 bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-800 shrink-0">
+            <div className="p-2 bg-blue-600/30 text-blue-400 rounded-xl">
+              <User className="w-5 h-5" />
+            </div>
+            <div className="text-xs">
+              <div className="font-bold flex items-center gap-2">
+                <span>{activeAgent.fullName}</span>
+                <span className="text-[10px] font-mono bg-blue-500/20 text-blue-300 px-1.5 py-0.2 rounded border border-blue-500/30">
+                  {activeAgent.repNumber}
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400 block mt-0.5">{activeAgent.agencyFirm}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Dynamic Selector Bar: Select Active Adviser & Target Policy */}
+        <div className="grid sm:grid-cols-2 gap-4 mt-6 pt-2">
+          {/* Advisor Selector */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-blue-600" />
+                <span>Certified Financial Adviser</span>
+              </label>
+              <Link href="/admin/agents" className="text-[11px] font-semibold text-blue-600 hover:underline">
+                Manage / Provision &rarr;
+              </Link>
+            </div>
+            <select
+              value={selectedAgentId}
+              onChange={(e) => handleAgentChange(e.target.value)}
+              className="w-full text-xs font-semibold px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-slate-800"
+            >
+              {agentsList.length > 0 ? (
+                agentsList.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.fullName} ({a.repNumber}) - {a.agencyFirm}
+                  </option>
+                ))
+              ) : (
+                <option value="agt_andi_01">Andi Wijaya, ChFC (MAS-REP-882910)</option>
+              )}
+            </select>
+          </div>
+
+          {/* Policy Catalog Selector */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <FileCheck2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Active Product Pitch / Policy</span>
+              </label>
+              <span className="text-[10px] font-mono font-bold text-slate-500">
+                {activePolicy?.code}
+              </span>
+            </div>
+            <select
+              value={selectedPolicyId}
+              onChange={(e) => handlePolicyChange(e.target.value)}
+              className="w-full text-xs font-semibold px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500 text-slate-800"
+            >
+              {policiesList.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.type.replace(/_/g, " ")}) - S${p.premiumAmount}/mo
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
 
-      {/* FR-05 Mandatory Privacy Disclosure Gate (PRD Compliance) */}
-      <div className={`mb-6 rounded-3xl p-5 sm:p-6 transition-all border shadow-xs ${
-        privacyScriptRead
-          ? "bg-emerald-50/80 border-emerald-300"
-          : "bg-blue-50/90 border-blue-300 ring-2 ring-blue-200"
-      }`}>
+      {/* Mandatory Privacy Disclosure Gate (FR-05) */}
+      <div
+        className={`mb-6 rounded-3xl p-5 sm:p-6 transition-all border shadow-xs ${
+          privacyScriptRead
+            ? "bg-emerald-50/80 border-emerald-300"
+            : "bg-blue-50/90 border-blue-300 ring-2 ring-blue-200"
+        }`}
+      >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1.5 flex-1">
             <div className="flex items-center gap-2">
@@ -478,7 +729,7 @@ export default function CopilotTestPage() {
               Read the following mandatory privacy disclosure aloud to Mdm. Tan before initiating the product pitch:
             </p>
             <div className="p-3 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 italic leading-relaxed shadow-2xs font-medium">
-              &ldquo;Mdm. Tan, for your consumer protection under Singapore MAS Fair Dealing guidelines, our meeting audio is analyzed by AI in real time to ensure all policy disclosures are accurate. Please note that camera and facial video data on your mobile screen are processed strictly on your personal device and are <strong className="font-black text-slate-900 not-italic">never recorded, saved, or uploaded to any database</strong>.&rdquo;
+              &ldquo;Mdm. Tan, for your consumer protection under Singapore MAS Fair Dealing guidelines, our meeting audio is analyzed by VERA AI in real time to ensure all policy disclosures are accurate. Please note that camera and facial video data on your mobile screen are processed strictly on your personal device and are <strong className="font-black text-slate-900 not-italic">never recorded, saved, or uploaded to any database</strong>.&rdquo;
             </div>
           </div>
 
@@ -504,13 +755,12 @@ export default function CopilotTestPage() {
 
       {/* Two Column Layout: Advisor Speech Input vs Live Copilot Telemetry */}
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Left Column: Unified Advisory Speech & Control Center */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-col justify-between space-y-5">
+        {/* Left Column: Advisory Speech & Control Center */}
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs flex flex-col justify-between space-y-5">
           <div className="space-y-4">
-            {/* 1. Unified Control Bar */}
+            {/* Control Bar */}
             <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 shadow-sm space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                {/* Single Aligned Mic Toggle Button */}
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -521,15 +771,15 @@ export default function CopilotTestPage() {
                         setIsListening(true);
                       }
                     }}
-                    className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all ${
+                    className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-xs ${
                       isListening
-                        ? "bg-rose-600 hover:bg-rose-700 text-white shadow-md animate-pulse ring-2 ring-rose-400/40"
-                        : "bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:scale-105"
+                        ? "bg-rose-600 hover:bg-rose-700 text-white animate-pulse"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white hover:scale-105"
                     }`}
                   >
                     {isListening ? (
                       <>
-                        <Square className="w-4 h-4 fill-white" />
+                        <Square className="w-4 h-4 fill-current" />
                         <span>Stop & Audit</span>
                       </>
                     ) : (
@@ -540,408 +790,290 @@ export default function CopilotTestPage() {
                     )}
                   </button>
 
-                  <div className="text-xs">
-                    <span className="font-bold text-slate-200 block">
-                      {isListening ? "Listening to Speech..." : "Mic Idle"}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {isListening ? "Speech appends live below" : "Click to speak into mic"}
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        isListening ? "bg-emerald-400 animate-ping" : "bg-slate-500"
+                      }`}
+                    />
+                    <span className="text-xs text-slate-300 font-mono">
+                      {isListening ? "Transcribing Voice..." : "Mic Idle"}
                     </span>
                   </div>
                 </div>
 
-                {/* Send & Audit Now Button */}
-                <button
-                  type="button"
-                  onClick={() => handleAnalyze()}
-                  disabled={loading || !hasDialogue}
-                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-xs"
-                >
-                  {loading ? (
-                    <>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAnalyze()}
+                    disabled={loading || !hasDialogue}
+                    className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all shadow-xs"
+                  >
+                    {loading ? (
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Auditing...</span>
-                    </>
-                  ) : (
-                    <>
+                    ) : (
                       <Send className="w-3.5 h-3.5" />
-                      <span>Send & Audit Now</span>
-                    </>
-                  )}
-                </button>
+                    )}
+                    <span>Audit Now</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputText("");
+                      setInterimTranscript("");
+                      syncDialogueToSession("");
+                    }}
+                    title="Clear Buffer"
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
-              {/* 60s Batch Timer Progress Bar */}
-              <div className="pt-2 border-t border-slate-800 space-y-1.5">
-                <div className="flex items-center justify-between text-xs text-slate-300">
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-blue-400" />
-                    <span>60-Second Auto-Audit Batch Timer:</span>
-                  </div>
-                  <span className="font-mono font-bold text-blue-400">
-                    {isListening ? `${secondsRemaining}s remaining` : "Timer paused (Mic idle)"}
+              {/* Interval Progress Bar */}
+              <div className="pt-2 border-t border-slate-800">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 mb-1">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-400" />
+                    <span>60s MAS Auto-Audit Batch</span>
                   </span>
+                  <span>{isListening ? `${secondsRemaining}s remaining` : "Paused"}</span>
                 </div>
-
-                <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                   <div
-                    className="bg-blue-500 h-full transition-all duration-1000 ease-linear rounded-full"
-                    style={{ width: `${isListening ? progressPercent : 0}%` }}
+                    className="h-full bg-gradient-to-r from-blue-500 to-amber-400 transition-all duration-1000"
+                    style={{ width: isListening ? `${progressPercent}%` : "0%" }}
                   />
                 </div>
               </div>
             </div>
 
-            {/* 2. SpeechListener Audio Visualizer */}
+            {/* Browser Speech Listener Component */}
             <SpeechListener
-              onTranscript={handleSpeechTranscript}
               isListening={isListening}
               onToggleListening={setIsListening}
+              onTranscript={handleSpeechTranscript}
               interimTranscript={interimTranscript}
               setInterimTranscript={setInterimTranscript}
-              engineMode="browser"
             />
 
-            {/* 3. Meeting Dialogue Textarea */}
+            {/* Spoken Dialogue Buffer */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Meeting Dialogue Buffer (Pitch & Client Q&A):
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Live Meeting Dialogue Buffer (Synced to Client Screen)</span>
                 </label>
-                {hasDialogue && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInputText("");
-                      setResult(null);
-                      syncDialogueToSession("");
-                    }}
-                    className="text-[11px] text-slate-400 hover:text-rose-600 flex items-center gap-1 transition-colors"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>Clear buffer</span>
-                  </button>
-                )}
+                <span className="text-[11px] font-mono text-slate-400">
+                  {inputText.length} chars
+                </span>
               </div>
               <textarea
-                rows={4}
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                className="w-full text-xs font-mono bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed"
-                placeholder="Spoken words or client Q&A will transcribe and appear here live..."
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  syncDialogueToSession(e.target.value);
+                }}
+                placeholder="Spoken words and client Q&A will stream here live as you talk with Mdm. Tan, or select a scenario below..."
+                rows={7}
+                className="w-full text-xs sm:text-sm p-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-sans leading-relaxed text-slate-800"
               />
-
-              {/* Quick One-Click Speech Simulation Pills for Easy Demonstration & Real-Time Sync */}
-              <div className="mt-2 space-y-1.5">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                  Quick Speech Simulation Pills (Live Sync to Client Screen):
-                </span>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = 'Advisor: "Mdm. Tan, please note that pre-existing conditions like hypertension have a standard 12-month waiting period before full coverage activates."';
-                      setInputText(text);
-                      syncDialogueToSession(text);
-                      handleAnalyze(text);
-                    }}
-                    className="text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg transition-colors"
-                  >
-                    💬 Speak: Waiting Period (Clause 4)
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = 'Advisor: "Terminating or surrendering this policy within the first 36 months incurs an early surrender penalty of 15% on accumulated surrender value."';
-                      setInputText(text);
-                      syncDialogueToSession(text);
-                      handleAnalyze(text);
-                    }}
-                    className="text-[10px] font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg transition-colors"
-                  >
-                    💬 Speak: Surrender Penalty (Clause 3)
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = 'Advisor: "This policy provides a guaranteed monthly annuity payout starting at age 62 for 20 years, backed by Singapore statutory regulations."';
-                      setInputText(text);
-                      syncDialogueToSession(text);
-                      handleAnalyze(text);
-                    }}
-                    className="text-[10px] font-medium bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-lg transition-colors"
-                  >
-                    💬 Speak: Annuity at 62 (Clause 1)
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const text = 'Advisor: "Under Section 25(5) of the Insurance Act, you have a mandatory duty of disclosure to declare all past medical conditions honestly."';
-                      setInputText(text);
-                      syncDialogueToSession(text);
-                      handleAnalyze(text);
-                    }}
-                    className="text-[10px] font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 px-2.5 py-1 rounded-lg transition-colors"
-                  >
-                    💬 Speak: Section 25(5) Disclosure
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInputText("");
-                      setResult(null);
-                      syncDialogueToSession("");
-                    }}
-                    className="text-[10px] font-medium bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 px-2 py-1 rounded-lg transition-colors"
-                  >
-                    🗑️ Clear (Silent Mode)
-                  </button>
+              {interimTranscript && (
+                <div className="mt-1.5 p-2 bg-blue-50/80 border border-blue-200 rounded-xl text-[11px] text-blue-700 italic">
+                  Hearing: &ldquo;{interimTranscript}&rdquo;
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* 4. Quick Sample Scenarios */}
+            {/* Quick Test Scenarios */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Or Load Full Scenarios:
-              </label>
-              <div className="space-y-1.5">
-                {SAMPLE_SCENARIOS.map((s) => (
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
+                Simulate Scenario Dialogue (Quick Test)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {SAMPLE_SCENARIOS.map((sc) => (
                   <button
-                    key={s.id}
+                    key={sc.id}
                     type="button"
-                    onClick={() => handleSelectScenario(s.text)}
-                    className={`w-full text-left p-2.5 rounded-xl text-xs font-medium transition-all border ${
-                      inputText === s.text
-                        ? "bg-blue-50 border-blue-300 text-blue-900 shadow-xs"
-                        : "bg-slate-50 border-slate-200/80 text-slate-700 hover:bg-slate-100"
-                    }`}
+                    onClick={() => handleSelectScenario(sc.text)}
+                    className="text-left p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-700 transition-colors font-medium flex items-center justify-between group"
                   >
-                    <div className="font-bold mb-0.5">{s.label}</div>
-                    <div className="text-[11px] text-slate-500 line-clamp-1">{s.text}</div>
+                    <span className="truncate pr-2">{sc.label}</span>
+                    <Sparkles className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0" />
                   </button>
                 ))}
               </div>
             </div>
           </div>
-
-          <div className="pt-2 text-[11px] text-slate-400 flex items-center justify-between">
-            <span>Language: English (Singapore - en-SG)</span>
-            <span className="font-mono">{lastAuditTime ? `Last audit: ${lastAuditTime}` : "No audit run yet"}</span>
-          </div>
         </div>
 
-        {/* Right Column: Real-time Copilot Screen (Dark HUD Mode) */}
-        <div className="bg-slate-900 bg-gradient-to-b from-slate-900 to-slate-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col justify-between border border-slate-800">
+        {/* Right Column: Real-Time Copilot Audit Telemetry & Cheat Sheet */}
+        <div className="bg-slate-900 text-white border border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between space-y-6">
           <div>
-            <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
+            {/* Header & Provenance */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-blue-400" />
-                <span className="text-xs font-bold tracking-wider text-slate-300 uppercase">
-                  Advisor Real-Time HUD
+                <BrainCircuit className="w-5 h-5 text-blue-400" />
+                <h2 className="font-bold text-sm text-white">MAS Compliance Copilot HUD</h2>
+              </div>
+              {result?.auditEngine && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                  {result.auditEngine === "google-gemini-live" ? "Google Gemini 3.5 Flash-Lite" : "MAS Regulatory Fallback"}
                 </span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[11px] bg-slate-800 px-3 py-1 rounded-full text-slate-300">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>MAS Monitoring Active</span>
-              </div>
+              )}
             </div>
 
-            {error && (
-              <div className="p-3.5 bg-rose-950/60 border border-rose-800 rounded-2xl text-xs text-rose-300 mb-4">
-                {error}
-              </div>
-            )}
-
-            {result ? (
-              <div className="space-y-4 animate-in fade-in duration-300">
-                {/* Status & Confidence Badge */}
-                <div className="flex items-center justify-between p-4 bg-slate-800/80 rounded-2xl border border-slate-700">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider ${
-                        result.warningFlags === "GREEN"
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
-                          : result.warningFlags === "YELLOW"
-                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                          : "bg-rose-500/20 text-rose-400 border border-rose-500/40"
-                      }`}
-                    >
-                      {result.warningFlags === "GREEN"
-                        ? "🟢 Compliant (Green)"
-                        : result.warningFlags === "YELLOW"
-                        ? "🟡 Advisory Warning (Yellow)"
-                        : "🔴 Severe Violation (Red)"}
-                    </span>
+            {/* Paired Client Real-Time Telemetry & Gesture Agreement */}
+            {(clientLiveness || qrData?.sessionId) && (
+              <div className="mt-4 p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+                    <Scan className="w-4 h-4 text-blue-400" />
+                    <span>Client Gesture & Biometric Telemetry</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Confidence Score</span>
-                    <span className="text-sm font-mono font-bold text-white">
-                      {Math.round((result.confidenceScore || 0.85) * 100)}%
-                    </span>
-                  </div>
-                </div>
-
-                {/* Engine Source Transparency Badge */}
-                <div className="flex items-center justify-between px-3.5 py-2 bg-slate-950/70 border border-slate-700/60 rounded-xl text-[11px]">
-                  <div className="flex items-center gap-1.5">
-                    {result.auditEngine === "google-gemini-live" ? (
-                      <>
-                        <Sparkles className="w-3.5 h-3.5 text-blue-400 animate-spin" />
-                        <span className="font-bold text-blue-300">Audit Source:</span>
-                        <span className="text-slate-200 font-mono text-[10px]">Google Gemini Cloud ({result.modelUsed || "gemini-2.5-flash"})</span>
-                      </>
-                    ) : (
-                      <>
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        <span className="font-bold text-emerald-300">Audit Source:</span>
-                        <span className="text-slate-200 text-[10px]">{result.modelUsed || "Vera MAS Compliance Rules Engine (Offline Fallback)"}</span>
-                      </>
-                    )}
-                  </div>
-                  <span className={`text-[9px] font-mono px-2 py-0.5 rounded font-semibold ${
-                    result.auditEngine === "google-gemini-live"
-                      ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
-                      : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                  }`}>
-                    {result.auditEngine === "google-gemini-live" ? "Live GenAI" : "Offline Rule Engine"}
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Live Paired
                   </span>
                 </div>
 
-                {/* Mirrored Screen Sync Status Banner */}
-                {qrData?.sessionId && (
-                  <div className="p-3 bg-blue-950/60 border border-blue-800/60 rounded-xl flex items-center justify-between text-xs text-blue-200">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-                      <span className="font-semibold text-blue-100">Mirrored Screen Sync:</span>
-                      <span className="text-[11px] text-blue-300">
-                        {result.auditedQnAs?.[0]?.topic === "PRE_EXISTING_CONDITION"
-                          ? "Synced '12-Month Waiting Period' highlight to client's phone"
-                          : result.auditedQnAs?.[0]?.topic === "SURRENDER_PENALTY"
-                          ? "Synced 'Early Surrender Penalty' highlight to client's phone"
-                          : "Clause tags and disclosures synced to client's phone"}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {/* Calibration & Face Match */}
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-400 font-semibold block">Identity & Mesh</span>
+                    <div className="flex items-center gap-1.5 font-bold text-slate-200 text-[11px]">
+                      <UserCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                      <span>
+                        {clientLiveness?.gestureAgreement?.faceMatchScore !== undefined
+                          ? `Match: ${Math.round(clientLiveness.gestureAgreement.faceMatchScore * 100)}% (${clientLiveness.gestureAgreement.faceMatchPassed ? "Verified" : "Low"})`
+                          : clientLiveness?.calibratedFaceMeshAvailable
+                          ? "Mesh Calibrated (Stored)"
+                          : "Calibrating..."}
                       </span>
                     </div>
-                    <span className="text-[10px] font-mono bg-blue-500/30 text-blue-200 px-2 py-0.5 rounded-md">
-                      Batch-Synced
+                  </div>
+
+                  {/* Gesture Agreement */}
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-400 font-semibold block">Recap Agreement</span>
+                    <div className="flex items-center gap-1.5 font-bold text-[11px]">
+                      {clientLiveness?.gestureAgreement?.nodDetected ? (
+                        <span className="text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Head Nod Confirmed
+                        </span>
+                      ) : clientLiveness?.gestureAgreement?.shakeDetected ? (
+                        <span className="text-amber-400 flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Disagree / Shake
+                        </span>
+                      ) : isSessionSigned ? (
+                        <span className="text-emerald-400 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" /> Signed & Completed
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-500" /> Awaiting Gesture
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Client Confusion Events if any */}
+                {clientConfusionEvents.length > 0 && (
+                  <div className="pt-2 border-t border-slate-800 text-[11px] text-amber-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>{clientConfusionEvents.length} confusion hesitation point(s) recorded during live discussion</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Error Display */}
+            {error && (
+              <div className="my-4 p-3 bg-rose-950/60 border border-rose-800 rounded-2xl text-xs text-rose-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* Audit Results */}
+            {result ? (
+              <div className="space-y-4 my-4 animate-in fade-in">
+                {/* Flag & Confidence Banner */}
+                <div
+                  className={`p-4 rounded-2xl border flex items-center justify-between ${
+                    result.warningFlags === "GREEN"
+                      ? "bg-emerald-950/40 border-emerald-800/80 text-emerald-200"
+                      : result.warningFlags === "YELLOW"
+                      ? "bg-amber-950/40 border-amber-800/80 text-amber-200"
+                      : "bg-rose-950/40 border-rose-800/80 text-rose-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-white/10">
+                      {result.warningFlags === "GREEN" ? (
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                      ) : (
+                        <AlertTriangle className="w-5 h-5 text-amber-400" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-xs font-black uppercase tracking-wider">
+                        Compliance Status: {result.warningFlags}
+                      </div>
+                      <div className="text-[11px] opacity-80 mt-0.5">
+                        {result.isCompliant
+                          ? "Advisory statements satisfy MAS Fair Dealing standard."
+                          : "Potential mis-selling or aggressive pitch patterns flagged."}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-mono opacity-70 block">Confidence</span>
+                    <span className="text-sm font-black font-mono">
+                      {Math.round(result.confidenceScore * 100)}%
                     </span>
                   </div>
-                )}
+                </div>
 
-                {/* Live Client Confusion & Hesitation Telemetry Banner */}
-                {clientConfusionEvents.length > 0 && (
-                  <div className="p-3.5 bg-amber-500/20 border border-amber-400/40 rounded-2xl flex items-start gap-2.5 text-xs text-amber-200 animate-fadeIn">
-                    <BrainCircuit className="w-5 h-5 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-amber-300">
-                          Client Hesitation / Confusion Flagged at Device:
-                        </span>
-                        <span className="text-[10px] font-mono bg-amber-400/20 text-amber-200 border border-amber-400/30 px-2 py-0.5 rounded-full">
-                          {clientConfusionEvents.length} {clientConfusionEvents.length === 1 ? "Event" : "Events"}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-amber-100/90 leading-relaxed">
-                        Client showed confusion during discussion of{" "}
-                        <strong className="text-white">
-                          {clientConfusionEvents[clientConfusionEvents.length - 1].activeTopic}
-                        </strong>{" "}
-                        at meeting time{" "}
-                        <span className="font-mono text-amber-300">
-                          {String(
-                            Math.floor(
-                              clientConfusionEvents[clientConfusionEvents.length - 1].relativeSeconds / 60
-                            )
-                          ).padStart(2, "0")}
-                          :
-                          {String(
-                            clientConfusionEvents[clientConfusionEvents.length - 1].relativeSeconds % 60
-                          ).padStart(2, "0")}
-                        </span>
-                        . Please pause to clarify this clause before closing.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Way B: Conversational Q&A Audit Section */}
+                {/* Audited Q&A Extraction */}
                 {result.auditedQnAs && result.auditedQnAs.length > 0 && (
-                  <div className="p-4 bg-slate-800/90 border border-slate-700 rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-wider">
-                        <MessageSquare className="w-4 h-4 text-indigo-400" />
-                        <span>Client Q&A Compliance Audit:</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full">
-                          Speaker-Turn Analysis
-                        </span>
-                        <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                          <span>Mirrored to Client Screen</span>
-                        </span>
-                      </div>
-                    </div>
-
+                  <div className="space-y-2">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Audited Client Q&A Exchanges
+                    </span>
                     {result.auditedQnAs.map((qna, idx) => (
                       <div
                         key={idx}
-                        className={`p-3 rounded-xl border space-y-2 text-xs ${
-                          qna.isCompliant
-                            ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-200"
-                            : "bg-rose-950/40 border-rose-800/60 text-rose-200"
-                        }`}
+                        className="bg-slate-800/80 border border-slate-700 rounded-2xl p-3.5 space-y-2 text-xs"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                            Topic: {qna.topic || "Q&A"}
-                          </span>
+                          <span className="font-bold text-blue-300">Client: &ldquo;{qna.clientQuestion}&rdquo;</span>
                           <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase ${
+                            className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
                               qna.isCompliant
-                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                ? "bg-emerald-500/20 text-emerald-300"
+                                : "bg-rose-500/20 text-rose-300"
                             }`}
                           >
-                            {qna.isCompliant ? "Compliant Advice" : "MAS Violation"}
+                            {qna.isCompliant ? "COMPLIANT" : "FLAGGED"}
                           </span>
                         </div>
-
-                        <div>
-                          <span className="text-[11px] font-semibold text-slate-300 block">💬 Client Question:</span>
-                          <p className="text-white text-xs italic bg-slate-900/50 p-2 rounded-lg mt-0.5">
-                            &quot;{qna.clientQuestion}&quot;
-                          </p>
+                        <div className="text-slate-300 italic pl-2 border-l-2 border-slate-600">
+                          Advisor: &ldquo;{qna.advisorAnswer}&rdquo;
                         </div>
-
-                        <div>
-                          <span className="text-[11px] font-semibold text-slate-300 block">🗣️ Advisor Answer:</span>
-                          <p className="text-slate-200 text-xs italic bg-slate-900/50 p-2 rounded-lg mt-0.5">
-                            &quot;{qna.advisorAnswer}&quot;
-                          </p>
-                        </div>
-
                         {qna.regulatoryNotice && (
-                          <div className="text-[11px] font-mono text-amber-300 bg-amber-950/40 p-1.5 rounded-md">
-                            ⚠️ Reference: {qna.regulatoryNotice}
+                          <div className="text-[10px] font-mono text-amber-400 bg-amber-950/40 p-1.5 rounded-lg">
+                            Regulatory Notice: {qna.regulatoryNotice}
                           </div>
                         )}
-
-                        <p className="text-[11px] text-slate-300 leading-relaxed">{qna.explanation}</p>
-
-                        {qna.compliantScript && (
-                          <div className="pt-2 border-t border-slate-700/60 space-y-1">
-                            <span className="text-[11px] font-bold text-blue-300 flex items-center gap-1.5">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-                              <span>Required Corrective Script:</span>
-                            </span>
-                            <p className="text-xs text-white bg-blue-950/50 p-2 rounded-lg border border-blue-800/40 italic">
-                              &quot;{qna.compliantScript}&quot;
-                            </p>
+                        {!qna.isCompliant && qna.compliantScript && (
+                          <div className="bg-emerald-950/40 border border-emerald-800/50 p-2.5 rounded-xl text-[11px] text-emerald-200">
+                            <strong className="block text-emerald-300 mb-0.5 font-bold">
+                              Recommended Compliant Response:
+                            </strong>
+                            &ldquo;{qna.compliantScript}&rdquo;
                           </div>
                         )}
                       </div>
@@ -995,7 +1127,7 @@ export default function CopilotTestPage() {
               <div className="my-12 text-center p-8 border border-dashed border-slate-800 rounded-2xl">
                 <Mic className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
                 <p className="text-xs text-slate-400 font-medium">
-                  Click &quot;Start Live Listening&quot; to speak, or load a scenario on the left, then audit with Gemini.
+                  Click &quot;Start Live Listening&quot; to speak, or load a scenario on the left, then audit with VERA AI.
                 </p>
               </div>
             )}
@@ -1005,9 +1137,9 @@ export default function CopilotTestPage() {
           <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Google Gemini Multimodal Copilot
+              VERA AI Multi-Turn Copilot
             </span>
-            <span>MAS Fair Dealing 60s Batch Audit</span>
+            <span>MAS Fair Dealing 60s Batch Engine</span>
           </div>
         </div>
       </div>
@@ -1077,6 +1209,140 @@ export default function CopilotTestPage() {
             ) : (
               <div className="py-8 text-xs text-rose-500">
                 Failed to generate QR code. Please try again.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MAS Compliance Audit Certificate Modal */}
+      {showCertificateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-xl">
+                  <Award className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    MAS Fair Dealing Compliance Certificate
+                  </h3>
+                  <p className="text-xs text-slate-500">Official Immutable Audit Record & Digital Signature</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCertificateModal(false)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg text-lg font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            {certLoading || !certificateData ? (
+              <div className="py-12 text-center text-slate-500 flex flex-col items-center gap-3">
+                <RefreshCw className="w-6 h-6 animate-spin text-indigo-600" />
+                <span className="text-xs font-medium">Generating cryptographic certificate...</span>
+              </div>
+            ) : (
+              <div className="space-y-4 text-xs text-slate-700">
+                {/* Hash & Verification Badge */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Certificate ID: {certificateData.certificateId}
+                    </span>
+                    <span className="text-[10px] font-mono bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                      CRYPTOGRAPHICALLY VERIFIED
+                    </span>
+                  </div>
+                  <div className="font-mono text-[10px] text-slate-500 truncate">
+                    SHA-256 Digest: {certificateData.certificateHash}
+                  </div>
+                </div>
+
+                {/* Details Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                    <span className="text-[10px] text-slate-400 block">Insured Customer:</span>
+                    <span className="font-bold text-slate-900 text-sm">{certificateData.customer.name}</span>
+                    <span className="text-[11px] text-slate-500 block">{certificateData.customer.phone}</span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                    <span className="text-[10px] text-slate-400 block">Licensed MAS Representative:</span>
+                    <span className="font-bold text-slate-900 text-sm">{certificateData.advisor.fullName}</span>
+                    <span className="text-[11px] text-indigo-700 font-mono block">{certificateData.advisor.repNumber}</span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                    <span className="text-[10px] text-slate-400 block">Policy Product:</span>
+                    <span className="font-bold text-slate-900">{certificateData.policy.name}</span>
+                    <span className="text-[11px] text-slate-500 block">
+                      Sum Assured: S${certificateData.policy.coverageAmount.toLocaleString("en-SG")}
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                    <span className="text-[10px] text-slate-400 block">Audit SLA Classification:</span>
+                    <span className="font-bold text-emerald-700 text-sm">
+                      {certificateData.auditSummary.fastTrackApproved ? "Fast-Track (1-Day SLA)" : "Manual Review (3-4 Days)"}
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      Liveness Score: {certificateData.auditSummary.livenessScore}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Statutory Acts Audited */}
+                <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-2xl space-y-1.5">
+                  <span className="font-bold text-blue-950 block text-[11px]">
+                    Singapore Statutory Compliance Checklist:
+                  </span>
+                  <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-blue-900">
+                    {certificateData.auditSummary.statutoryActsAudited.map((act, idx) => (
+                      <li key={idx}>{act}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* Signature View */}
+                {certificateData.signatureDataUrl && (
+                  <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Customer Digital Signature on File:
+                    </span>
+                    <div className="bg-white p-2 rounded-xl border border-slate-200 inline-block">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={certificateData.signatureDataUrl}
+                        alt="Customer Signature"
+                        className="h-16 w-auto object-contain"
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 block">
+                      Timestamp: {new Date(certificateData.signedAt).toLocaleString("en-SG")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Legal Disclaimer */}
+                <p className="text-[10px] text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
+                  {certificateData.masRegistryDisclaimer}
+                </p>
+
+                {/* Modal Actions */}
+                <div className="pt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print / Save PDF</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>

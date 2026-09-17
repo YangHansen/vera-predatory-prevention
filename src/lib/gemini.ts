@@ -1,7 +1,7 @@
 import type { CopilotAnalysisResult, Policy } from "@/types";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 export class GeminiService {
   /**
@@ -110,6 +110,20 @@ Output JSON format strictly in English:
   "isCompliant": boolean,
   "warningFlags": "GREEN" | "YELLOW" | "RED",
   "confidenceScore": number (0.0 to 1.0),
+  "conversationSummary": [
+    "string (concise 1-2 sentence plain-English summary of what was explained or discussed so far for the customer's live mobile screen)"
+  ],
+  "clientQuestions": [
+    {
+      "id": "string",
+      "question": "string (Customer question asked during meeting)",
+      "advisorAnswer": "string (Advisor response)",
+      "status": "ANSWERED" | "PENDING" | "NEEDS_CLARIFICATION",
+      "statusLabel": "Reviewed with Advisor" | "Still needs explanation" | "Needs clarification",
+      "topic": "string"
+    }
+  ],
+  "coveredSectionIds": [1, 2, 3, 4] (Array of policy section IDs covered: 1 for What is covered, 2 for What you pay, 3 for When cover starts, 4 for How to cancel),
   "detectedIssues": [
     {
       "type": "AGGRESSIVE_TACTIC" | "MISSING_DISCLOSURE" | "MISLEADING_RETURN" | "PRESSURE_SIGNING" | "JARGON_OVERLOAD",
@@ -157,6 +171,11 @@ Output JSON format strictly in English:
         const parsed = JSON.parse(contentText);
         return {
           ...parsed,
+          conversationSummary: Array.isArray(parsed.conversationSummary) && parsed.conversationSummary.length > 0
+            ? parsed.conversationSummary
+            : ["Advisor reviewed core policy coverage, monthly premiums, and statutory free-look cancellation terms."],
+          clientQuestions: Array.isArray(parsed.clientQuestions) ? parsed.clientQuestions : [],
+          coveredSectionIds: Array.isArray(parsed.coveredSectionIds) ? parsed.coveredSectionIds : [1],
           auditEngine: "google-gemini-live",
           modelUsed: GEMINI_MODEL,
           timestamp,
@@ -191,9 +210,9 @@ Output JSON format strictly in English:
       ? "audio/mp4"
       : "audio/webm";
 
-    const defaultModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest"];
+    const defaultModels = ["gemini-3.5-flash-lite", "gemini-3.5-transcribe", "gemini-3.5-flash"];
     const preferredModel = process.env.GEMINI_TRANSCRIBE_MODEL;
-    const modelsToTry = preferredModel
+    const modelsToTry = preferredModel && preferredModel !== "gemini-3.5-transcribe-live"
       ? [preferredModel, ...defaultModels.filter((m) => m !== preferredModel)]
       : defaultModels;
 
@@ -312,6 +331,22 @@ Output JSON format strictly in English:
             cheatSheetBullet: "Enforce Section 25(5) Insurance Act: Always disclose all past diagnoses and treatments.",
           },
         ],
+        conversationSummary: [
+          "You asked about whether your pre-existing health condition will be covered.",
+          "Advisor discussed Singapore Insurance Act Section 25(5) mandatory disclosure rules and the standard 12-month waiting period.",
+        ],
+        clientQuestions: [
+          {
+            id: "q_med_01",
+            question: "Will the policy cover my pre-existing health diagnosis?",
+            advisorAnswer: "Advised not to declare or leave blank on form",
+            status: "NEEDS_CLARIFICATION",
+            statusLabel: "Still needs explanation",
+            topic: "PRE_EXISTING_CONDITION",
+            timestamp,
+          },
+        ],
+        coveredSectionIds: [1, 3],
         timestamp,
       };
     }
@@ -357,6 +392,22 @@ Output JSON format strictly in English:
             cheatSheetBullet: "Disclose 15% 36-month early surrender penalty clearly before closing.",
           },
         ],
+        conversationSummary: [
+          "You asked about early savings withdrawals in year 2 or 3.",
+          "Advisor discussed the 36-month lock-in period, 15% surrender deduction, and 14-day statutory free-look cancellation right.",
+        ],
+        clientQuestions: [
+          {
+            id: "q_surr_01",
+            question: "Can I withdraw my money in year 2 or 3 without any penalty?",
+            advisorAnswer: "Claimed zero penalty like a bank account",
+            status: "NEEDS_CLARIFICATION",
+            statusLabel: "Still needs explanation",
+            topic: "SURRENDER_PENALTY",
+            timestamp,
+          },
+        ],
+        coveredSectionIds: [2, 4],
         timestamp,
       };
     }
@@ -433,6 +484,22 @@ Output JSON format strictly in English:
             cheatSheetBullet: "Never rush signatures; emphasize 14-day Free-Look cancellation right.",
           },
         ],
+        conversationSummary: [
+          "Advisor introduced the policy benefits, annuity payout schedule, and premium structure.",
+          "Reviewed 14-day statutory Free-Look right to cancel with 100% full refund before signing.",
+        ],
+        clientQuestions: [
+          {
+            id: "q_risk_01",
+            question: "Is the investment return guaranteed and what are the risks?",
+            advisorAnswer: "Claimed guaranteed risk-free wealth accelerator",
+            status: "NEEDS_CLARIFICATION",
+            statusLabel: "Still needs explanation",
+            topic: "GUARANTEED_RETURN",
+            timestamp,
+          },
+        ],
+        coveredSectionIds: [1, 2, 4],
         timestamp,
       };
     }
@@ -466,11 +533,33 @@ Output JSON format strictly in English:
             cheatSheetBullet: "Confirmed compliant disclosure of benefits, exclusions, and statutory waiting periods.",
           },
         ],
+        conversationSummary: [
+          "Advisor explained the S$450/month regular premium and S$250,000 family protection coverage.",
+          "Confirmed mandatory pre-existing condition disclosure under Section 25(5) of the Insurance Act and the 12-month waiting period.",
+        ],
+        clientQuestions: [
+          {
+            id: "q_comp_01",
+            question: "How do I declare pre-existing conditions and when does coverage start?",
+            advisorAnswer: "Explained Section 25(5) disclosure and 12-month waiting period",
+            status: "ANSWERED",
+            statusLabel: "Reviewed with Advisor",
+            topic: "PRE_EXISTING_CONDITION",
+            timestamp,
+          },
+        ],
+        coveredSectionIds: [1, 2, 3],
         timestamp,
       };
     }
 
     // Default clean dialogue
+    const defaultCovered: number[] = [];
+    if (lower.includes("cover") || lower.includes("benefit") || lower.includes("protection") || lower.includes("annuity")) defaultCovered.push(1);
+    if (lower.includes("premium") || lower.includes("pay") || lower.includes("fee") || lower.includes("cost")) defaultCovered.push(2);
+    if (lower.includes("waiting") || lower.includes("medical") || lower.includes("condition")) defaultCovered.push(3);
+    if (lower.includes("cancel") || lower.includes("surrender") || lower.includes("free-look")) defaultCovered.push(4);
+
     return {
       isCompliant: true,
       warningFlags: "GREEN",
@@ -496,6 +585,22 @@ Output JSON format strictly in English:
           cheatSheetBullet: "Promote informed consent and patient explanation.",
         },
       ],
+      conversationSummary: [
+        "Advisor is presenting the policy terms, coverage benefits, and regular payment schedule.",
+        "Statutory 14-day Free-Look cancellation rights apply to all life policies under MAS guidelines.",
+      ],
+      clientQuestions: [
+        {
+          id: "q_gen_01",
+          question: "What are my regular monthly premiums and key benefits?",
+          advisorAnswer: "Explained regular premium and coverage protection amount",
+          status: "ANSWERED",
+          statusLabel: "Reviewed with Advisor",
+          topic: "COVERAGE",
+          timestamp,
+        },
+      ],
+      coveredSectionIds: defaultCovered.length > 0 ? defaultCovered : [1, 2],
       timestamp,
     };
   }

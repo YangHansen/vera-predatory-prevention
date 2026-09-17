@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { AlertCircle, Sparkles, Cpu, Globe, Radio } from "lucide-react";
-
-export type SttEngineMode = "cloud" | "browser";
+import { AlertCircle, Sparkles, Cpu, Globe, Radio, Zap, Activity } from "lucide-react";
+import type { SttEngineMode } from "@/types";
 
 interface SpeechListenerProps {
   onTranscript: (text: string) => void;
@@ -40,6 +39,22 @@ function downsampleBuffer(
     offsetBuffer = nextOffsetBuffer;
   }
   return result;
+}
+
+// Helper: Encode Float32Array into a raw 16kHz 16-bit Mono PCM base64 string for Gemini Live WebSocket
+function encodePcmBase64(samples: Float32Array): string {
+  const buffer = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(buffer);
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
 }
 
 // Helper: Encode Float32Array into a valid 16kHz 16-bit Mono PCM WAV base64 string
@@ -103,6 +118,7 @@ export function SpeechListener({
   const isListeningRef = useRef(isListening);
 
   const recognitionRef = useRef<any>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -110,6 +126,11 @@ export function SpeechListener({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const currentVolumeRef = useRef<number>(0);
   const flushAudioRef = useRef<(() => void) | null>(null);
+
+  // Web Speech continuous transcript persistence ref
+  const pendingInterimRef = useRef<string>("");
+  const liveStreamTextRef = useRef<string>("");
+  const liveStreamFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
@@ -132,6 +153,20 @@ export function SpeechListener({
 
   // Stop All Audio & cleanup resources
   const cleanupAll = useCallback(() => {
+    if (liveStreamFlushTimerRef.current) {
+      clearTimeout(liveStreamFlushTimerRef.current);
+      liveStreamFlushTimerRef.current = null;
+    }
+    if (liveStreamTextRef.current.trim().length > 0) {
+      onTranscriptRef.current(liveStreamTextRef.current.trim());
+      liveStreamTextRef.current = "";
+    }
+    if (pendingInterimRef.current.trim().length > 0) {
+      onTranscriptRef.current(pendingInterimRef.current.trim());
+      pendingInterimRef.current = "";
+    }
+    setInterimTranscriptRef.current("");
+
     if (flushAudioRef.current) {
       try {
         flushAudioRef.current();
@@ -142,9 +177,16 @@ export function SpeechListener({
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
     }
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch {}
+      wsRef.current = null;
+    }
     if (recognitionRef.current) {
       try {
         recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
         recognitionRef.current.stop();
       } catch {}
       recognitionRef.current = null;
@@ -201,14 +243,210 @@ export function SpeechListener({
     }
   };
 
-  // 1. Browser Native Real-Time Web Speech API
+  // 1. Google Gemini 3.5 Transcribe Live (Bidirectional WebSocket Streaming)
+  const startGeminiLiveSTT = useCallback(async (stream: MediaStream) => {
+    try {
+      setStatusMessage("Connecting to Gemini Live...");
+      const configRes = await fetch("/api/copilot/live-config");
+      const configData = await configRes.json();
+
+      if (!configData.success || !configData.wsUrl) {
+        console.warn("Gemini Live configuration unavailable, falling back to Browser Web Speech");
+        startBrowserSpeech(stream);
+        return false;
+      }
+
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      if (audioCtx.state === "suspended") {
+        await audioCtx.resume();
+      }
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      setupVisualizer(audioCtx, source);
+
+      const ws = new WebSocket(configData.wsUrl);
+      wsRef.current = ws;
+
+      let isWsReady = false;
+
+      ws.onopen = () => {
+        setStatusMessage("Connecting to Gemini Live...");
+        setErrorMsg(null);
+
+        // Send initial setup frame for verbatim STT transcription
+        const setupMessage = {
+          setup: {
+            model: configData.model || "models/gemini-3.5-transcribe-live",
+            generationConfig: {
+              responseModalities: ["TEXT"],
+              temperature: 0.0,
+            },
+            systemInstruction: {
+              parts: [
+                {
+                  text: "You are a real-time verbatim speech-to-text transcriber for an insurance advisory meeting. Output strictly the exact English words spoken with proper punctuation. Never respond to the user, never answer questions, never summarize, and never add introductory text. Transcribe spoken words verbatim.",
+                },
+              ],
+            },
+          },
+        };
+        ws.send(JSON.stringify(setupMessage));
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          let rawData = event.data;
+          if (rawData instanceof Blob) {
+            rawData = await rawData.text();
+          }
+          const data = JSON.parse(rawData);
+
+          if (data?.setupComplete) {
+            isWsReady = true;
+            setStatusMessage("Gemini 3.5 Live (Streaming Active)");
+            setErrorMsg(null);
+            return;
+          }
+
+          if (data?.error) {
+            console.warn("Gemini Live API error:", data.error);
+            setErrorMsg(`Gemini Live: ${data.error.message || "Model error"}. Reverting to Browser STT...`);
+            startBrowserSpeech(stream);
+            return;
+          }
+
+          // Handle server text parts
+          const parts = data?.serverContent?.modelTurn?.parts;
+          if (Array.isArray(parts)) {
+            for (const part of parts) {
+              if (part.text) {
+                liveStreamTextRef.current += part.text;
+                setInterimTranscriptRef.current(liveStreamTextRef.current);
+
+                // Auto-commit debounce timer (flush if no new words within 750ms)
+                if (liveStreamFlushTimerRef.current) {
+                  clearTimeout(liveStreamFlushTimerRef.current);
+                }
+                liveStreamFlushTimerRef.current = setTimeout(() => {
+                  const finalChunk = liveStreamTextRef.current.trim();
+                  if (finalChunk.length > 0) {
+                    onTranscriptRef.current(finalChunk);
+                    liveStreamTextRef.current = "";
+                    setInterimTranscriptRef.current("");
+                  }
+                }, 750);
+              }
+            }
+          }
+
+          // When turn completes, commit transcript
+          if (data?.serverContent?.turnComplete) {
+            if (liveStreamFlushTimerRef.current) {
+              clearTimeout(liveStreamFlushTimerRef.current);
+              liveStreamFlushTimerRef.current = null;
+            }
+            const finalChunk = liveStreamTextRef.current.trim();
+            if (finalChunk.length > 0) {
+              onTranscriptRef.current(finalChunk);
+              liveStreamTextRef.current = "";
+              setInterimTranscriptRef.current("");
+            }
+          }
+        } catch (e) {
+          console.warn("Error parsing Gemini Live message:", e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.warn("Gemini Live WebSocket error:", err);
+        setErrorMsg("Gemini Live stream interrupted. Reverting to Browser STT...");
+        startBrowserSpeech(stream);
+      };
+
+      ws.onclose = () => {
+        isWsReady = false;
+        if (isListeningRef.current) {
+          setStatusMessage("Gemini Live Reconnecting...");
+        }
+      };
+
+      // Create ScriptProcessor for 16kHz PCM audio streaming
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      scriptProcessorRef.current = processor;
+
+      const muteGain = audioCtx.createGain();
+      muteGain.gain.value = 0;
+      source.connect(processor);
+      processor.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+
+      let accumulatedSamples: Float32Array[] = [];
+      let accumulatedLength = 0;
+      let lastSendTime = Date.now();
+
+      processor.onaudioprocess = (e) => {
+        if (!isListeningRef.current || !isWsReady || ws.readyState !== WebSocket.OPEN) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const copy = new Float32Array(input.length);
+        copy.set(input);
+        accumulatedSamples.push(copy);
+        accumulatedLength += copy.length;
+
+        const elapsedMs = Date.now() - lastSendTime;
+
+        // Stream raw PCM chunks every ~250ms for low latency
+        if (elapsedMs >= 250 && accumulatedLength > 0) {
+          const merged = new Float32Array(accumulatedLength);
+          let offset = 0;
+          for (const chunk of accumulatedSamples) {
+            merged.set(chunk, offset);
+            offset += chunk.length;
+          }
+
+          accumulatedSamples = [];
+          accumulatedLength = 0;
+          lastSendTime = Date.now();
+
+          const downsampled = downsampleBuffer(merged, audioCtx.sampleRate, 16000);
+          const pcmBase64 = encodePcmBase64(downsampled);
+
+          const audioChunkMessage = {
+            realtimeInput: {
+              mediaChunks: [
+                {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: pcmBase64,
+                },
+              ],
+            },
+          };
+
+          try {
+            ws.send(JSON.stringify(audioChunkMessage));
+          } catch (e) {
+            console.warn("Failed to send PCM chunk:", e);
+          }
+        }
+      };
+
+      return true;
+    } catch (e: any) {
+      console.warn("Gemini Live init failed:", e);
+      startBrowserSpeech(stream);
+      return false;
+    }
+  }, []);
+
+  // 2. Browser Native Real-Time Web Speech API (Continuous, zero word-loss on restarts)
   const startBrowserSpeech = useCallback((stream: MediaStream) => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      setErrorMsg("Browser Web Speech API not supported in this browser. Switching to Gemini Cloud...");
-      setSelectedEngine("cloud");
+      setErrorMsg("Browser Web Speech API not supported in this browser. Switching to Cloud REST...");
+      startGoogleCloudSTT(stream);
       return false;
     }
 
@@ -248,9 +486,11 @@ export function SpeechListener({
         }
 
         if (finalChunk.trim().length > 0) {
+          pendingInterimRef.current = "";
           onTranscriptRef.current(finalChunk.trim());
           setInterimTranscriptRef.current("");
         } else if (interim.trim().length > 0) {
+          pendingInterimRef.current = interim.trim();
           setInterimTranscriptRef.current(interim);
         }
       };
@@ -263,13 +503,20 @@ export function SpeechListener({
           return;
         }
         if (event.error === "network" || event.error === "service-not-allowed" || event.error === "audio-capture") {
-          console.warn("Web Speech network/service issue, falling back to Gemini Cloud STT:", event.error);
-          setSelectedEngine("cloud");
+          console.warn("Web Speech network/service issue, falling back to Cloud REST STT:", event.error);
+          startGoogleCloudSTT(stream);
         }
       };
 
       recognition.onend = () => {
-        // Immediate restart with zero dead-zone if still listening
+        // Commit any pending interim text when recognition ends/restarts so middle speech is NEVER lost
+        if (pendingInterimRef.current.trim().length > 0) {
+          onTranscriptRef.current(pendingInterimRef.current.trim());
+          pendingInterimRef.current = "";
+          setInterimTranscriptRef.current("");
+        }
+
+        // Auto-restart immediately with zero gap
         if (isListeningRef.current && recognitionRef.current) {
           try {
             recognition.start();
@@ -287,7 +534,7 @@ export function SpeechListener({
     }
   }, []);
 
-  // 2. Google Gemini Cloud STT (Continuous AudioContext PCM WAV Slices to /api/copilot/transcribe)
+  // 3. Google Gemini Cloud STT (Continuous AudioContext PCM WAV Slices to /api/copilot/transcribe)
   const startGoogleCloudSTT = useCallback((stream: MediaStream) => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -300,11 +547,9 @@ export function SpeechListener({
       const source = audioCtx.createMediaStreamSource(stream);
       setupVisualizer(audioCtx, source);
 
-      // Create continuous ScriptProcessor for uninterrupted audio capture
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       scriptProcessorRef.current = processor;
 
-      // Keep processor active by connecting through zero-gain mute node to destination
       const muteGain = audioCtx.createGain();
       muteGain.gain.value = 0;
       source.connect(processor);
@@ -314,6 +559,7 @@ export function SpeechListener({
       let accumulatedSamples: Float32Array[] = [];
       let accumulatedLength = 0;
       let lastSliceTime = Date.now();
+      let lastSpeechTime = 0;
       let isSending = false;
 
       const sendCurrentBuffer = async () => {
@@ -327,17 +573,15 @@ export function SpeechListener({
           offset += chunk.length;
         }
 
-        // Reset buffer with zero gap
         accumulatedSamples = [];
         accumulatedLength = 0;
         lastSliceTime = Date.now();
+        lastSpeechTime = 0;
 
         try {
-          // Downsample to 16kHz mono WAV
           const downsampled = downsampleBuffer(merged, audioCtx.sampleRate, 16000);
           const base64Wav = encodeWavBase64(downsampled, 16000);
 
-          setStatusMessage("Transcribing with Gemini Cloud...");
           const res = await fetch("/api/copilot/transcribe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -352,18 +596,17 @@ export function SpeechListener({
             onTranscriptRef.current(data.transcript.trim());
           }
         } catch (err) {
-          console.warn("Gemini transcription error:", err);
+          console.warn("Cloud transcription slice error:", err);
         } finally {
           isSending = false;
           if (isListeningRef.current) {
-            setStatusMessage("Google Gemini Cloud STT (Active)");
+            setStatusMessage("Cloud REST (Active - Pause-Aligned)");
           }
         }
       };
 
-      // Set flush handler so final words are never dropped when user stops
       flushAudioRef.current = () => {
-        if (accumulatedLength >= audioCtx.sampleRate * 0.6) {
+        if (accumulatedLength >= audioCtx.sampleRate * 0.5) {
           sendCurrentBuffer();
         }
       };
@@ -376,19 +619,33 @@ export function SpeechListener({
         accumulatedSamples.push(copy);
         accumulatedLength += copy.length;
 
-        const elapsedMs = Date.now() - lastSliceTime;
-        const vol = currentVolumeRef.current;
+        // Calculate RMS volume for speech activity detection
+        let sumSq = 0;
+        for (let i = 0; i < input.length; i++) {
+          sumSq += input[i] * input[i];
+        }
+        const rms = Math.sqrt(sumSq / input.length);
+        const isSpeaking = rms > 0.012;
+        const now = Date.now();
 
-        // VAD boundary slicing:
-        // Slice at natural pause (vol < 12%) after 3.2s, or force slice at 4.5s max
-        const shouldSlice = elapsedMs >= 4500 || (elapsedMs >= 3200 && vol < 12);
+        if (isSpeaking) {
+          lastSpeechTime = now;
+        }
 
-        if (shouldSlice && !isSending && accumulatedLength >= audioCtx.sampleRate * 1.0) {
+        const elapsedMs = now - lastSliceTime;
+        const silenceDurationMs = lastSpeechTime > 0 ? now - lastSpeechTime : 0;
+
+        // Dispatch on natural speech pause (>450ms silence after speech) OR max window (4.5s)
+        const hasSpokenEnough = accumulatedLength >= audioCtx.sampleRate * 1.5;
+        const isNaturalPause = hasSpokenEnough && silenceDurationMs >= 450;
+        const isMaxWindowReached = elapsedMs >= 4500 && accumulatedLength >= audioCtx.sampleRate * 2.0;
+
+        if ((isNaturalPause || isMaxWindowReached) && !isSending) {
           sendCurrentBuffer();
         }
       };
 
-      setStatusMessage("Google Gemini Cloud STT (Active)");
+      setStatusMessage("Cloud REST (Active - Pause-Aligned)");
       return true;
     } catch (e: any) {
       console.warn("Google Cloud STT setup error:", e);
@@ -403,7 +660,6 @@ export function SpeechListener({
       setErrorMsg(null);
       setStatusMessage("Requesting microphone...");
 
-      // Disable echoCancellation and noiseSuppression so speaker playback is not muted by Chrome's AEC
       navigator.mediaDevices
         .getUserMedia({
           audio: {
@@ -415,7 +671,9 @@ export function SpeechListener({
         .then((stream) => {
           mediaStreamRef.current = stream;
 
-          if (selectedEngine === "cloud") {
+          if (selectedEngine === "gemini-live") {
+            startGeminiLiveSTT(stream);
+          } else if (selectedEngine === "cloud") {
             startGoogleCloudSTT(stream);
           } else {
             const started = startBrowserSpeech(stream);
@@ -437,7 +695,7 @@ export function SpeechListener({
     return () => {
       cleanupAll();
     };
-  }, [isListening, selectedEngine, startBrowserSpeech, startGoogleCloudSTT, cleanupAll]);
+  }, [isListening, selectedEngine, startGeminiLiveSTT, startBrowserSpeech, startGoogleCloudSTT, cleanupAll]);
 
   return (
     <div className="space-y-3">
@@ -451,19 +709,6 @@ export function SpeechListener({
         <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
           <button
             type="button"
-            onClick={() => handleEngineChange("cloud")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              selectedEngine === "cloud"
-                ? "bg-blue-600 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>✨ Google Gemini Cloud AI</span>
-          </button>
-
-          <button
-            type="button"
             onClick={() => handleEngineChange("browser")}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
               selectedEngine === "browser"
@@ -473,6 +718,32 @@ export function SpeechListener({
           >
             <Globe className="w-3.5 h-3.5" />
             <span>🌐 Browser Web Speech</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleEngineChange("gemini-live")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              selectedEngine === "gemini-live"
+                ? "bg-blue-600 text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>✨ Gemini 3.5 Live</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleEngineChange("cloud")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              selectedEngine === "cloud"
+                ? "bg-blue-600 text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>Cloud REST</span>
           </button>
         </div>
       </div>
@@ -486,7 +757,11 @@ export function SpeechListener({
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
             <span className="text-xs font-semibold text-slate-200">
-              {selectedEngine === "cloud" ? "Gemini Cloud Audio:" : "Browser Speech Mic:"}
+              {selectedEngine === "gemini-live"
+                ? "Gemini Live Audio:"
+                : selectedEngine === "cloud"
+                ? "Cloud REST Audio:"
+                : "Browser Speech Mic:"}
             </span>
           </div>
 
@@ -514,7 +789,7 @@ export function SpeechListener({
         </div>
       )}
 
-      {/* Live Interim Speech Bubble (for Browser Speech) */}
+      {/* Live Interim Speech Bubble */}
       {isListening && interimTranscript && (
         <div className="p-3 bg-blue-950/70 rounded-2xl border border-blue-800 text-xs text-blue-200 flex items-start gap-2.5 animate-in fade-in">
           <Sparkles className="w-4 h-4 shrink-0 text-blue-400 animate-spin mt-0.5" />
