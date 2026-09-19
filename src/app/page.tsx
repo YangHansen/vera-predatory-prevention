@@ -1,20 +1,37 @@
 import Link from "next/link";
-import { ShieldCheck, Cpu, Smartphone, FileText, CheckCircle2, Layers, Sparkles, Zap, ArrowRight } from "lucide-react";
+import {
+  ShieldCheck,
+  Cpu,
+  Smartphone,
+  FileText,
+  CheckCircle2,
+  Layers,
+  Sparkles,
+  Zap,
+  ArrowRight,
+  UserPlus,
+  BookOpen,
+  Award,
+} from "lucide-react";
 
 export default function Home() {
   const endpoints = [
     { method: "GET", path: "/api/health", desc: "API status, engine version & Gemini connectivity" },
+    { method: "POST", path: "/api/agents", desc: "Backend-only provisioning for licensed MAS financial advisers" },
+    { method: "GET", path: "/api/agents", desc: "List all certified agency advisors and compliance ratings" },
+    { method: "GET", path: "/api/policies", desc: "Dynamic multi-product insurance catalog with MAS disclosures" },
     { method: "POST", path: "/api/session", desc: "Initialize session & generate QR code for cross-device hand-off" },
-    { method: "GET", path: "/api/session/[id]", desc: "Fetch active session & policy state" },
-    { method: "PATCH", path: "/api/session/[id]/status", desc: "Update session stage (Handed-off, Reviewing, Signed)" },
+    { method: "GET", path: "/api/session/[id]", desc: "Fetch active session & dynamic policy state" },
+    { method: "PATCH", path: "/api/session/[id]", desc: "Update session policy, advisor, telemetry & dialogue buffer" },
     { method: "POST", path: "/api/copilot/analyze", desc: "Real-time NLP intent analysis & aggressive tactic detector" },
     { method: "POST", path: "/api/policy/summarize", desc: "Gen-AI policy clause summarization (3-5 simple bullets)" },
     { method: "POST", path: "/api/consent/submit", desc: "Submit digital signature + liveness telemetry -> Branching logic" },
+    { method: "GET", path: "/api/session/[id]/receipt", desc: "Generate cryptographic MAS Fair Dealing Compliance Certificate" },
   ];
 
   return (
-    <main className="max-w-5xl mx-auto px-4 py-8 sm:py-12">
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm">
+    <main className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100">
           <div className="flex items-center gap-3.5">
@@ -23,9 +40,9 @@ export default function Home() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Vera Engine API & PWA</h1>
+                <h1 className="text-2xl font-bold text-slate-900 tracking-tight">VERA AI Platform & Engine</h1>
                 <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                  v2.0 MVP
+                  v2.5 MVP
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -64,7 +81,7 @@ export default function Home() {
               <span>Google Gemini AI</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Configured with free-tier model <code className="bg-slate-200/60 px-1 py-0.5 rounded text-[11px] font-mono">gemini-3.5-flash-lite</code> and deterministic fallback.
+              Real-time multi-modal audio analysis paired with deterministic MAS Fair Dealing statutory fallback engine.
             </p>
           </div>
 
@@ -74,21 +91,49 @@ export default function Home() {
               <span>Cross-Device QR Hand-off</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Session state coordinator with QR code generation & Fast-Track vs Manual Review branching logic.
+              Session state coordinator with QR code generation & Fast-Track (1-Day) vs Compliance Review (3-4 Days) branching logic.
             </p>
           </div>
         </div>
 
-        {/* Interactive Feature Playgrounds (2 Testing Functions) */}
+        {/* Interactive Feature Playgrounds */}
         <div className="my-8">
           <h2 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-blue-600" />
-            Interactive Testing Playgrounds
+            Core Platform Modules & Playgrounds
           </h2>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            {/* Feature 1: Policy Summarizer */}
-            <div className="bg-blue-600 bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-5 rounded-3xl shadow-sm flex flex-col justify-between border border-blue-500">
+          <div className="grid md:grid-cols-3 gap-4">
+            {/* Feature 1: Admin Agent Provisioning */}
+            <div className="bg-slate-900 bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-5 rounded-3xl shadow-xs flex flex-col justify-between border border-slate-800">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                    Enterprise Admin
+                  </span>
+                  <UserPlus className="w-4 h-4 text-blue-400" />
+                </div>
+                <h3 className="text-base font-bold text-white mb-1.5">
+                  1. Adviser Provisioning Portal
+                </h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Internal enterprise management to provision licensed MAS financial advisers with verified MAS-REP numbers. Public self-signup is disabled under MAS Market Conduct Guidelines.
+                </p>
+              </div>
+
+              <div className="pt-4 mt-4 border-t border-slate-800">
+                <Link
+                  href="/admin/agents"
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 group"
+                >
+                  <span>Open Adviser Management Portal</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Feature 2: Policy Summarizer */}
+            <div className="bg-blue-600 bg-gradient-to-br from-blue-600 to-indigo-700 text-white p-5 rounded-3xl shadow-xs flex flex-col justify-between border border-blue-500">
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-mono font-bold bg-white/20 px-2.5 py-0.5 rounded-full uppercase tracking-wider text-white">
@@ -97,10 +142,10 @@ export default function Home() {
                   <Sparkles className="w-4 h-4 text-blue-200" />
                 </div>
                 <h3 className="text-base font-bold text-white mb-1.5">
-                  1. Gen-AI Policy Summarizer
+                  2. Gen-AI Policy Summarizer
                 </h3>
                 <p className="text-xs text-blue-100 leading-relaxed">
-                  Test distilling complex insurance legal jargon into 3–4 ultra-clear English bullet points tailored for senior consumers (Mdm. Tan) under MAS Fair Dealing guidelines.
+                  Distill complex insurance legal jargon into 3–4 ultra-clear English bullet points tailored for senior consumers under MAS Fair Dealing guidelines.
                 </p>
               </div>
 
@@ -109,14 +154,14 @@ export default function Home() {
                   href="/policy"
                   className="w-full bg-white text-blue-700 hover:bg-blue-50 font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 group"
                 >
-                  <span>Open Policy Summarizer Playground</span>
+                  <span>Open Policy Summarizer</span>
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </Link>
               </div>
             </div>
 
-            {/* Feature 2: AI Copilot & Mis-selling Detector */}
-            <div className="bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-950 text-white p-5 rounded-3xl shadow-sm flex flex-col justify-between border border-slate-800">
+            {/* Feature 3: AI Copilot & Mis-selling Detector */}
+            <div className="bg-slate-900 bg-gradient-to-br from-slate-900 to-slate-950 text-white p-5 rounded-3xl shadow-xs flex flex-col justify-between border border-slate-800">
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
@@ -125,10 +170,10 @@ export default function Home() {
                   <Zap className="w-4 h-4 text-amber-400" />
                 </div>
                 <h3 className="text-base font-bold text-white mb-1.5">
-                  2. AI Sales Copilot & Mis-selling Detector
+                  3. VERA AI Sales Copilot HUD
                 </h3>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Test real-time detection of high-pressure sales tactics or deceptive return promises and receive instant &quot;Cheat Sheet&quot; compliant advisory scripts.
+                  Real-time detection of high-pressure sales tactics or deceptive return promises, multi-product catalog selection, and instant &quot;Cheat Sheet&quot; compliant advisory scripts.
                 </p>
               </div>
 
@@ -137,7 +182,7 @@ export default function Home() {
                   href="/copilot"
                   className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 group"
                 >
-                  <span>Open AI Sales Copilot Playground</span>
+                  <span>Launch VERA AI Copilot HUD</span>
                   <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
                 </Link>
               </div>
@@ -179,17 +224,24 @@ export default function Home() {
               target="_blank"
               className="text-xs font-semibold text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
             >
-              Test GET /api/health &rarr;
+              GET /api/health &rarr;
             </Link>
             <Link
-              href="/api/policy/summarize"
+              href="/api/agents"
               target="_blank"
               className="text-xs font-semibold text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
             >
-              Test GET /api/policy/summarize &rarr;
+              GET /api/agents &rarr;
+            </Link>
+            <Link
+              href="/api/policies"
+              target="_blank"
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
+            >
+              GET /api/policies &rarr;
             </Link>
           </div>
-          <span className="text-xs text-slate-400 font-mono">Vera Engine • Next.js 15 PWA • MAS Fair Dealing</span>
+          <span className="text-xs text-slate-400 font-mono">VERA AI Platform • Next.js 15 • MAS Fair Dealing Compliance</span>
         </div>
       </div>
     </main>

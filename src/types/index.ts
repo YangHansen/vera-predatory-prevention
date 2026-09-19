@@ -11,6 +11,21 @@ export type SessionStatus =
 
 export type ComplianceFlag = "GREEN" | "YELLOW" | "RED";
 
+export interface AgentAccount {
+  id: string; // e.g., "agt_andi_01"
+  repNumber: string; // MAS Representative Number, e.g. "MAS-REP-882910"
+  fullName: string; // e.g., "Andi Wijaya, ChFC"
+  email: string; // e.g., "andi.wijaya@verainsure.sg"
+  phone: string; // e.g., "+65 9876 5432"
+  agencyFirm: string; // e.g., "Vera Financial Advisory Pte Ltd"
+  role: "SENIOR_ADVISOR" | "WEALTH_PLANNER" | "FINANCIAL_CONSULTANT" | "COMPLIANCE_OFFICER";
+  status: "ACTIVE" | "SUSPENDED" | "PENDING_VERIFICATION";
+  complianceRating: number; // e.g. 98.4 (%)
+  totalSessions: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PolicyClause {
   id: string;
   title: string;
@@ -25,10 +40,15 @@ export interface Policy {
   code: string;
   name: string;
   provider: string;
-  type: "TERM_LIFE" | "CRITICAL_ILLNESS" | "UNIT_LINK" | "HEALTH_CARE";
+  type: "TERM_LIFE" | "CRITICAL_ILLNESS" | "UNIT_LINK" | "HEALTH_CARE" | "ENDOWMENT";
+  tagline?: string;
   premiumAmount: number;
   premiumFrequency: "monthly" | "annually";
   coverageAmount: number;
+  isGuaranteedReturn?: boolean;
+  projectedReturnRate?: string;
+  surrenderPenaltyPeriodMonths?: number;
+  surrenderPenaltyPercent?: number;
   clauses: PolicyClause[];
   simplifiedSummary: string[];
 }
@@ -65,6 +85,16 @@ export interface AuditedQnA {
   compliantScript: string;
 }
 
+export interface ClientQuestionItem {
+  id: string;
+  question: string;
+  advisorAnswer?: string;
+  status: "ANSWERED" | "PENDING" | "NEEDS_CLARIFICATION";
+  statusLabel: string;
+  topic?: string;
+  timestamp: string;
+}
+
 export interface CopilotAnalysisResult {
   isCompliant: boolean;
   warningFlags: ComplianceFlag; // GREEN, YELLOW, or RED
@@ -76,6 +106,9 @@ export interface CopilotAnalysisResult {
     suggestedResponse: string;
     cheatSheetBullet: string;
   }[];
+  conversationSummary?: string[];
+  clientQuestions?: ClientQuestionItem[];
+  coveredSectionIds?: number[];
   auditEngine?: "google-gemini-live" | "mas-regulatory-rules-fallback";
   modelUsed?: string;
   timestamp: string;
@@ -93,6 +126,22 @@ export interface ConfusionEvent {
   durationSeconds?: number;
 }
 
+export interface GestureAgreement {
+  nodDetected: boolean;
+  nodConfidence: number; // 0.0 - 1.0
+  shakeDetected: boolean;
+  faceMatchScore?: number; // 0.0 - 1.0
+  faceMatchPassed?: boolean;
+  recapAgreedAt?: string;
+}
+
+export type ClientWorkflowStep =
+  | "SESSION_OVERVIEW"       // Picture 1
+  | "FACE_CALIBRATION"       // Picture 2
+  | "LIVE_CONVERSATION"      // Picture 3 (Mic Only)
+  | "REVIEW_BEFORE_SIGN"     // Recap with Face Match + Nod Detection + Signature
+  | "SUBMISSION_SUCCESS";    // Customer-facing clean receipt
+
 export interface LivenessTelemetry {
   passed: boolean;
   score: number;
@@ -101,6 +150,8 @@ export interface LivenessTelemetry {
   timeSpentReviewingSeconds: number;
   timerFallbackTriggered: boolean;
   confusionEvents?: ConfusionEvent[];
+  gestureAgreement?: GestureAgreement;
+  calibratedFaceMeshAvailable?: boolean;
 }
 
 export interface ConsentSubmissionRequest {
@@ -124,6 +175,48 @@ export interface BranchingResult {
   submittedAt: string;
 }
 
+export interface ComplianceCertificate {
+  certificateId: string;
+  certificateHash: string;
+  sessionId: string;
+  policy: {
+    id: string;
+    code: string;
+    name: string;
+    type: string;
+    provider: string;
+    premiumAmount: number;
+    premiumFrequency: string;
+    coverageAmount: number;
+  };
+  advisor: {
+    agentId: string;
+    repNumber: string;
+    fullName: string;
+    agencyFirm: string;
+  };
+  customer: {
+    name: string;
+    phone: string;
+  };
+  auditSummary: {
+    overallFlag: ComplianceFlag;
+    auditEngine: string;
+    fastTrackApproved: boolean;
+    slaTargetDays: number;
+    statutoryActsAudited: string[];
+    livenessScore: number;
+    reviewTimeSeconds: number;
+    confusionEventsCount: number;
+  };
+  confusionTimeline: ConfusionEvent[];
+  signatureDataUrl?: string;
+  signedAt: string;
+  masRegistryDisclaimer: string;
+}
+
+export type SttEngineMode = "gemini-live" | "cloud" | "browser";
+
 export type FocusState = "FOCUSED" | "ATTENTION_NEEDED" | "CONFUSED" | "CAMERA_OFF";
 
 export interface SyncedClauseHighlight {
@@ -146,6 +239,10 @@ export interface Session {
   copilotEvents: CopilotAnalysisResult[];
   syncedHighlight?: SyncedClauseHighlight;
   liveDialogueBuffer?: string;
+  conversationSummary?: string[];
+  clientQuestions?: ClientQuestionItem[];
+  explainedSections?: number[];
+  lastAiAnalysisTimestamp?: string;
   livenessTelemetry?: LivenessTelemetry;
   confusionEvents?: ConfusionEvent[];
   consentResult?: BranchingResult;

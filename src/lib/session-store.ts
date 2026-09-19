@@ -117,6 +117,18 @@ export class SessionStore {
     return session;
   }
 
+  static updateSession(id: string, updates: Partial<Session>): Session | undefined {
+    let session = this.getSession(id);
+    if (!session) {
+      session = this.getOrCreateSession(id);
+    }
+
+    Object.assign(session, updates, { updatedAt: new Date().toISOString() });
+    sessions.set(id, session);
+    saveToDisk(sessions);
+    return session;
+  }
+
   static updateSessionStatus(id: string, status: SessionStatus): Session | undefined {
     const session = this.getSession(id);
     if (!session) return undefined;
@@ -135,6 +147,30 @@ export class SessionStore {
     }
 
     session.copilotEvents.push(event);
+
+    if (event.conversationSummary && event.conversationSummary.length > 0) {
+      session.conversationSummary = event.conversationSummary;
+    }
+
+    if (event.clientQuestions && event.clientQuestions.length > 0) {
+      const existing = session.clientQuestions || [];
+      const map = new Map<string, any>();
+      existing.forEach((q) => map.set(q.question.toLowerCase().trim(), q));
+      event.clientQuestions.forEach((q) => {
+        const key = q.question.toLowerCase().trim();
+        const prev = map.get(key);
+        map.set(key, { ...(prev || {}), ...q });
+      });
+      session.clientQuestions = Array.from(map.values());
+    }
+
+    if (event.coveredSectionIds && event.coveredSectionIds.length > 0) {
+      const current = new Set(session.explainedSections || []);
+      event.coveredSectionIds.forEach((sid) => current.add(sid));
+      session.explainedSections = Array.from(current);
+    }
+
+    session.lastAiAnalysisTimestamp = new Date().toISOString();
     session.updatedAt = new Date().toISOString();
     sessions.set(id, session);
     saveToDisk(sessions);
@@ -172,6 +208,28 @@ export class SessionStore {
     }
 
     session.liveDialogueBuffer = text;
+
+    // Real-time keyword detection for instantaneous section checkmarks
+    const lower = text.toLowerCase();
+    const currentSections = new Set<number>(session.explainedSections || []);
+
+    if (/(cover|benefit|death|illness|critical|disability|tpd|assured|payout|protection|hospital|claim|event|survive|annuity|retire|250,000)/i.test(lower)) {
+      currentSections.add(1);
+    }
+    if (/(premium|pay|payment|cost|month|annual|dollar|\$|sgd|fee|charge|grace period|instalment|installment|deduct|pricing|rate|450)/i.test(lower)) {
+      currentSections.add(2);
+    }
+    if (/(start|inception|commence|waiting period|effective|day 1|day one|begin|condition|exclusion|pre-existing|clause|medical|underwriting)/i.test(lower)) {
+      currentSections.add(3);
+    }
+    if (/(cancel|free look|free-look|14 day|fourteen day|surrender|refund|terminate|penalty|cool off|cooling off|exit|cash out|36 month)/i.test(lower)) {
+      currentSections.add(4);
+    }
+
+    if (currentSections.size > 0) {
+      session.explainedSections = Array.from(currentSections);
+    }
+
     session.updatedAt = new Date().toISOString();
     sessions.set(id, session);
     saveToDisk(sessions);

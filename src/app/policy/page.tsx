@@ -61,11 +61,11 @@ export default function PolicySummarizerTestPage() {
           <ArrowLeft className="w-4 h-4" />
           <span>Back to API Dashboard</span>
         </Link>
-        <span className="text-xs font-mono font-medium text-slate-400">FR-04: Gen-AI Policy Summarizer</span>
+        <span className="text-xs font-mono font-medium text-slate-400">FR-04: VERA AI Policy Summarizer</span>
       </div>
 
       {/* Main Header */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm mb-6">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xs mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -73,11 +73,11 @@ export default function PolicySummarizerTestPage() {
                 <Sparkles className="w-5 h-5 text-blue-600" />
               </div>
               <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-                Gen-AI Policy Summarizer (Customer Interface)
+                VERA AI Policy Summarizer (Customer Interface)
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-slate-500">
-              Transforms complex legal jargon into 3–4 ultra-clear, concise English points for vulnerable and senior consumers (e.g., Mdm. Tan) under MAS Fair Dealing guidelines.
+              Transforms complex insurance legal jargon into 3–4 ultra-clear, concise English points for consumers (e.g., Mdm. Tan) under MAS Fair Dealing guidelines.
             </p>
           </div>
 
@@ -276,7 +276,7 @@ export default function PolicySummarizerTestPage() {
           <div className="pt-4 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              {isLiveGemini ? "Google Gemini 3.5 Flash-Lite (Live AI)" : "Ready"}
+              {isLiveGemini ? "Google Gemini 2.5 Live" : "VERA AI Statutory Engine"}
             </span>
             <span>MAS Fair Dealing & Singapore PDPA Compliant</span>
           </div>
