@@ -4,11 +4,12 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Vera - AI Insurance Consent & Mis-selling Prevention",
     short_name: "Vera",
-    description: "B2B SaaS platform ensuring genuine informed consent and real-time AI copilot for insurance.",
+    description:
+      "B2B SaaS platform ensuring genuine informed consent and real-time AI copilot for insurance.",
     start_url: "/",
     display: "standalone",
-    background_color: "#0f172a",
-    theme_color: "#2563eb",
+    background_color: "#ffffff",
+    theme_color: "#2459d3",
     orientation: "portrait",
     scope: "/",
     icons: [

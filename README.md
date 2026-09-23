@@ -1,3 +1,4 @@
+> **Frontend refresh (17 September decisions):** Start at `/` for the revised agent workspace. Use **New session** to preview the mobile client flow. This is an interactive, browser-local demo; camera, transcription and consent services are not connected. See [frontend requirements, integration notes, and acceptance cases](docs/frontend-refresh.md).
 # Vera — AI-Powered Insurance Consent & Mis-selling Prevention
 
 > **Project ID:** VERA-MVP-2026  

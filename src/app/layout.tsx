@@ -3,17 +3,17 @@ import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 
 export const viewport: Viewport = {
-  themeColor: "#2563eb",
+  themeColor: "#2459d3",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+
   viewportFit: "cover",
 };
 
 export const metadata: Metadata = {
-  title: "Vera - AI-Powered Insurance Consent & Mis-selling Prevention",
-  description: "B2B SaaS platform ensuring genuine informed consent and real-time AI copilot for insurance sales.",
+  title: "Vera — Agent workspace",
+  description:
+    "B2B SaaS platform ensuring genuine informed consent and real-time AI copilot for insurance sales.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
