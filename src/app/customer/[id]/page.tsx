@@ -7,6 +7,7 @@ import {
   FileCheck2,
   Clock,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   HelpCircle,
   RotateCcw,
@@ -23,7 +24,6 @@ import {
   Printer,
   X,
   Lock,
-  Pause,
   HelpCircle as QuestionIcon,
   Shield,
   Users,
@@ -31,6 +31,9 @@ import {
   Heart,
   Volume2,
   ExternalLink,
+  BrainCircuit,
+  Scan,
+  Activity,
 } from "lucide-react";
 import type {
   Session,
@@ -63,8 +66,9 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
   // 5-Stage Guided Workflow Step
   const [workflowStep, setWorkflowStep] = useState<ClientWorkflowStep>("SESSION_OVERVIEW");
 
-  // Calibrated Face Mesh from Step 2
+  // Calibrated Face Mesh & Snapshot from Step 2
   const [calibratedFaceMesh, setCalibratedFaceMesh] = useState<number[] | null>(null);
+  const [calibratedFaceImage, setCalibratedFaceImage] = useState<string | null>(null);
   const [isFaceCalibrated, setIsFaceCalibrated] = useState<boolean>(false);
 
   // Gesture Agreement & Recap State (Step 4)
@@ -89,18 +93,118 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
 
   // Review time tracker & live focus telemetry
   const [secondsSpentReviewing, setSecondsSpentReviewing] = useState<number>(0);
+  const [confusionEvents, setConfusionEvents] = useState<ConfusionEvent[]>([]);
+  const [confusionScore, setConfusionScore] = useState<number>(0);
   const [livenessTelemetry, setLivenessTelemetry] = useState<LivenessTelemetry>({
     passed: true,
     score: 0.98,
     confusionDetected: false,
     confusionEventsCount: 0,
+    confusionScore: 0,
     timeSpentReviewingSeconds: 0,
     timerFallbackTriggered: false,
   });
 
+  // Handle Real-Time Confusion Detected while reading summary in Stage 4
+  const handleConfusionLogged = useCallback((event: ConfusionEvent) => {
+    setConfusionEvents((prev) => {
+      const updated = [...prev, event];
+      const newScore = updated.reduce((acc, ev) => {
+        const weight = ev.intensity === "high" ? 3 : ev.intensity === "moderate" ? 2 : 1;
+        return acc + weight;
+      }, 0);
+      setConfusionScore(newScore);
+
+      setLivenessTelemetry((tele) => ({
+        ...tele,
+        confusionDetected: true,
+        confusionEventsCount: updated.length,
+        confusionScore: newScore,
+        confusionEvents: updated,
+      }));
+
+      // Sync telemetry to session backend
+      if (sessionId) {
+        fetch(`/api/session/${sessionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            telemetry: {
+              passed: true,
+              score: 0.96,
+              confusionDetected: true,
+              confusionEventsCount: updated.length,
+              confusionScore: newScore,
+              confusionEvents: updated,
+              timeSpentReviewingSeconds: secondsSpentReviewing,
+              timerFallbackTriggered: false,
+            },
+          }),
+        }).catch(() => {});
+      }
+
+      return updated;
+    });
+  }, [sessionId, secondsSpentReviewing]);
+
+  // Simulation & Reset Handlers for Customer Clarity & Confusion Tracker
+  const handleSimulateConfusionEvent = useCallback((
+    triggerType: "BROW_FURROW" | "PUZZLED_TILT" | "HAND_TO_HEAD",
+    intensity: "mild" | "moderate" | "high",
+    topic: string,
+    note: string
+  ) => {
+    const now = new Date();
+    const event: ConfusionEvent = {
+      id: `conf_sim_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: now.toLocaleTimeString("en-SG", { hour12: false }),
+      relativeSeconds: secondsSpentReviewing,
+      triggerType,
+      intensity,
+      activeTopic: topic,
+      speechSnippet: session?.liveDialogueBuffer?.slice(-120) || "Reviewing policy summary & plain-language pillars",
+      clarificationNote: note,
+      durationSeconds: intensity === "high" ? 6 : intensity === "moderate" ? 3 : 2,
+    };
+    handleConfusionLogged(event);
+  }, [secondsSpentReviewing, session?.liveDialogueBuffer, handleConfusionLogged]);
+
+  const handleResetConfusionTracker = useCallback(() => {
+    setConfusionEvents([]);
+    setConfusionScore(0);
+    setLivenessTelemetry((tele) => ({
+      ...tele,
+      confusionDetected: false,
+      confusionEventsCount: 0,
+      confusionScore: 0,
+      confusionEvents: [],
+    }));
+    if (sessionId) {
+      fetch(`/api/session/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telemetry: {
+            passed: true,
+            score: 0.96,
+            confusionDetected: false,
+            confusionEventsCount: 0,
+            confusionScore: 0,
+            confusionEvents: [],
+            timeSpentReviewingSeconds: secondsSpentReviewing,
+            timerFallbackTriggered: false,
+          },
+        }),
+      }).catch(() => {});
+    }
+  }, [sessionId, secondsSpentReviewing]);
+
   // Calibration & Gesture Handlers
-  const handleCalibrationComplete = useCallback((mesh: number[]) => {
+  const handleCalibrationComplete = useCallback((mesh: number[], faceImageBase64?: string) => {
     setCalibratedFaceMesh(mesh);
+    if (faceImageBase64) {
+      setCalibratedFaceImage(faceImageBase64);
+    }
     setIsFaceCalibrated(true);
   }, []);
 
@@ -317,6 +421,9 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
           signatureDataUrl,
           liveness: {
             ...livenessTelemetry,
+            confusionScore,
+            confusionEvents,
+            confusionEventsCount: confusionEvents.length,
             timeSpentReviewingSeconds: secondsSpentReviewing,
             gestureAgreement,
             calibratedFaceMeshAvailable: Boolean(calibratedFaceMesh),
@@ -797,10 +904,10 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
 
                 <div className="space-y-2.5 text-xs max-h-56 overflow-y-auto pr-1">
                   {session?.clientQuestions && session.clientQuestions.length > 0 ? (
-                    session.clientQuestions.map((q) => {
+                    session.clientQuestions.map((q, idx) => {
                       const isAnswered = q.status === "ANSWERED";
                       return (
-                        <div key={q.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1.5">
+                        <div key={`${q.id || "q"}-${idx}`} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1.5">
                           <span className="font-semibold text-slate-800 block">&ldquo;{q.question}&rdquo;</span>
                           <div className="flex items-center justify-between gap-2">
                             <span
@@ -850,22 +957,6 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
                 className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors flex items-center gap-1.5"
               >
                 <span>← Back</span>
-              </button>
-
-              <button
-                type="button"
-                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors flex items-center gap-1.5"
-              >
-                <Pause className="w-3.5 h-3.5" />
-                <span>I need a pause</span>
-              </button>
-
-              <button
-                type="button"
-                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors flex items-center gap-1.5"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>Ask for clarification</span>
               </button>
 
               <button
@@ -957,12 +1048,247 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
             </div>
           </div>
 
-          {/* Camera Face Matching & Nod Detection Ring */}
+          {/* Camera Face Matching & Nod Detection Ring with Active Summary Confusion Monitoring */}
           <VisualFocusRing
             mode="NOD_AND_VERIFY"
             calibratedMesh={calibratedFaceMesh}
+            calibratedFaceImage={calibratedFaceImage}
             onNodDetected={handleNodDetected}
+            reviewTimeSeconds={secondsSpentReviewing}
+            activeTopic={liveSyncInfo.topicTitle}
+            activeSpeechSnippet={session?.liveDialogueBuffer?.slice(-150)}
+            onConfusionLogged={handleConfusionLogged}
           />
+
+          {/* Real-Time Customer Clarity & Confusion Tracker (MAS Fair Dealing Safeguard) */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl shrink-0">
+                  <BrainCircuit className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm sm:text-base font-bold text-slate-900">
+                      Customer Clarity & Confusion Tracker
+                    </h2>
+                    <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full uppercase font-mono">
+                      MAS Safeguard
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Real-time on-device facial telemetry monitoring for comprehension, glabella furrow, and hesitation pauses.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <div className="shrink-0">
+                {confusionScore === 0 ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>High Clarity (0/8 pts)</span>
+                  </span>
+                ) : confusionScore < 8 && confusionEvents.length < 6 ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200">
+                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span>Normal Deliberation ({confusionScore}/8 pts)</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Elevated Hesitation ({confusionScore}/8 pts — Yellow Flag)</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Threshold Progress Meter */}
+            <div className="space-y-2 bg-slate-50/80 border border-slate-100 rounded-2xl p-4">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                <span className="flex items-center gap-1.5">
+                  <Activity className="w-3.5 h-3.5 text-blue-600" />
+                  <span>
+                    Hesitation Points: <strong className="text-slate-900 font-bold">{confusionScore}</strong> / 8 pts ({confusionEvents.length} events logged)
+                  </span>
+                </span>
+                <span className="text-[10px] font-mono font-bold text-slate-500 uppercase">
+                  {confusionScore >= 8 || confusionEvents.length >= 6
+                    ? "Trigger: Supervisor Review (Yellow)"
+                    : "Status: Fast-Track Clean Pass"}
+                </span>
+              </div>
+
+              {/* Multi-segment Progress Bar */}
+              <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden relative">
+                <div
+                  className={`h-full transition-all duration-300 rounded-full ${
+                    confusionScore >= 8 || confusionEvents.length >= 6
+                      ? "bg-amber-500"
+                      : confusionScore >= 5
+                      ? "bg-blue-500"
+                      : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${Math.min(100, (confusionScore / 8) * 100)}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                <span>0 pts (Clear Understanding)</span>
+                <span>4.0 pts (Attentive Deliberation)</span>
+                <span className="font-bold text-amber-700">8.0 pts (MAS Yellow Threshold)</span>
+              </div>
+
+              <p className="text-[11px] text-slate-500 leading-relaxed pt-1">
+                <strong className="text-slate-700">Fair Dealing Rule:</strong> Normal attentive reading and thoughtful deliberation up to 7 points is welcomed. If customer facial hesitation reaches 8 points or 6 distinct confusion events, VERA automatically flags the application Yellow for an underwriting compliance check, guaranteeing zero mis-selling or rushed consent.
+              </p>
+            </div>
+
+            {/* Live Hesitation Audit Feed */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Scan className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Live Facial Confusion Audit Feed ({confusionEvents.length})</span>
+                </span>
+                {confusionEvents.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResetConfusionTracker}
+                    className="text-[10px] font-semibold text-rose-600 hover:text-rose-800 transition-colors"
+                  >
+                    Clear Feed
+                  </button>
+                )}
+              </div>
+
+              {confusionEvents.length === 0 ? (
+                <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div className="text-xs">
+                    <strong className="text-emerald-900 font-bold block">No facial hesitation or confusion detected</strong>
+                    <span className="text-emerald-700 text-[11px]">
+                      Camera telemetry indicates attentive reading with zero glabella furrow or puzzled gestures.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {[...confusionEvents].reverse().map((ev, idx) => (
+                    <div
+                      key={ev.id || idx}
+                      className="p-3 bg-amber-50/60 border border-amber-200/70 rounded-xl space-y-1 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                          <strong className="font-bold text-amber-950">
+                            {ev.triggerType === "BROW_FURROW"
+                              ? "Glabella Brow Furrow (Tension)"
+                              : ev.triggerType === "PUZZLED_TILT"
+                              ? "Puzzled Head Tilt"
+                              : ev.triggerType === "HAND_TO_HEAD"
+                              ? "Holding Head / Chin Rest (Deliberation)"
+                              : "Sustained Hesitation Pause"}
+                          </strong>
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800">
+                            {ev.intensity === "high" ? "+3 pts (High)" : ev.intensity === "moderate" ? "+2 pts (Mod)" : "+1 pt (Mild)"}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                          +{ev.relativeSeconds}s ({ev.timestamp})
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-700">
+                        <span className="font-semibold text-slate-800">Clause Context:</span> {ev.activeTopic}
+                      </p>
+                      {ev.clarificationNote && (
+                        <p className="text-[10px] text-amber-800 italic pt-0.5">
+                          Safeguard: {ev.clarificationNote}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Interactive Testing & Simulation Controls */}
+            <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[10px] font-mono text-slate-400">
+                Simulation Controls:
+              </span>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSimulateConfusionEvent(
+                      "BROW_FURROW",
+                      "mild",
+                      "What is covered (Waiting Periods)",
+                      "14-day statutory free-look period allows full refund if terms are not satisfactory."
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                >
+                  +1 pt: Brow Furrow
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSimulateConfusionEvent(
+                      "PUZZLED_TILT",
+                      "moderate",
+                      "What you pay (Surrender Charges)",
+                      "Early surrender penalty provisions require transparent disclosure."
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                >
+                  +2 pts: Puzzled Tilt
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSimulateConfusionEvent(
+                      "BROW_FURROW",
+                      "high",
+                      "Exclusions & Pre-existing Conditions",
+                      "Pre-existing medical conditions require explicit customer affirmation."
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 transition-colors"
+                >
+                  +3 pts: Sustained Hesitation
+                </button>
+                {confusionEvents.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResetConfusionTracker}
+                    className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 transition-colors"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {(confusionScore >= 8 || confusionEvents.length >= 6) && (
+            <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-3xl text-xs text-amber-950 flex items-start gap-3 shadow-xs">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-extrabold text-sm block text-amber-900">
+                  Elevated Hesitation Detected ({confusionScore} pts / {confusionEvents.length} events) — Review at your own pace
+                </span>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  Under Singapore MAS Fair Dealing guidelines, your session will be routed for a friendly Central Compliance supervisor review (Yellow Flag) to guarantee that all contractual terms are clear. Remember: you have a statutory <strong>14-day Free-Look cancellation guarantee</strong> with a 100% full refund at zero penalty.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Policy Summary & Plain Language Pillars Recap */}
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-4">
@@ -1048,8 +1374,8 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
               </div>
               <div className="space-y-2 text-xs max-h-44 overflow-y-auto pr-1">
                 {session?.clientQuestions && session.clientQuestions.length > 0 ? (
-                  session.clientQuestions.map((q) => (
-                    <div key={q.id} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
+                  session.clientQuestions.map((q, idx) => (
+                    <div key={`${q.id || "q"}-${idx}`} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
                       <span className="font-semibold text-slate-800 text-[11px] block">&ldquo;{q.question}&rdquo;</span>
                       <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">
                         {q.statusLabel || "Reviewed with Advisor"}

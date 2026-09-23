@@ -2,6 +2,15 @@ import type { CopilotAnalysisResult, Policy } from "@/types";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+const GEMINI_VISION_MODEL = process.env.GEMINI_VISION_MODEL || "gemini-3.5-flash-lite";
+
+export interface BiometricFaceMatchResult {
+  isSamePerson: boolean;
+  matchPercentage: number;
+  confidence: number;
+  reason: string;
+  source: "gemini-vision-ai" | "fallback-local-biometric";
+}
 
 export class GeminiService {
   /**
@@ -98,8 +107,19 @@ Respond ONLY with a valid JSON array of strings in plain English, e.g. ["Point 1
                 role: "user",
                 parts: [
                   {
-                    text: `Analyze this insurance sales dialogue (which may include the advisor's pitch, customer conditions/inquiries, and Q&A exchanges between customer and advisor) for aggressive sales tactics, high-pressure closing, misleading guaranteed investment returns, omitted disclosures, or non-compliant answers to customer questions.
-Assess strictly against Monetary Authority of Singapore (MAS) Guidelines on Fair Dealing, the Financial Advisers Act (FAA), and the Insurance Act (Section 25(5) Duty of Disclosure for pre-existing medical conditions).
+                    text: `CRITICAL CONTEXT: You are an expert regulatory compliance auditor for the Monetary Authority of Singapore (MAS).
+You are evaluating a spoken insurance advisory consultation between:
+1. INSURANCE AGENT / FINANCIAL ADVISER: Licensed representative responsible for presenting terms, benefits, premiums, exclusions, waiting periods, and surrender charges accurately without deceptive or aggressive tactics.
+2. PROSPECTIVE CLIENT (Future Policyholder): Consumer evaluating the policy, asking questions, seeking clarification on conditions/fees, or expressing doubt.
+
+SPEAKER DIFFERENTIATION & AUDIT DIRECTIVES:
+- Distinguish speaker turns: Identify whether each spoken turn is an explanation by the Agent or a question/objection from the Client.
+- Client Inquiries: Whenever the prospective client asks a question (e.g. "Can I withdraw early?", "Do I declare high blood pressure?", "Is the return guaranteed?"):
+  * Capture it under "clientQuestions" and "auditedQnAs".
+  * Verify whether the Agent's answer was truthful, complete, and legally compliant under MAS Fair Dealing and the Insurance Act, or evasive/misleading.
+- Agent Statement Compliance:
+  * Any statement by the agent that misaligns with MAS regulations (e.g. omitting early surrender penalties, claiming non-guaranteed fund yields are guaranteed, downplaying pre-existing condition exclusions under Section 25(5) of the Insurance Act) MUST be flagged at least YELLOW (or RED for severe predatory deception).
+  * If all statements by the agent are 100% compliant and transparent, flag GREEN.
 
 Confidence threshold for warning trigger is 0.80.
 
@@ -112,6 +132,14 @@ Output JSON format strictly in English:
   "confidenceScore": number (0.0 to 1.0),
   "conversationSummary": [
     "string (concise 1-2 sentence plain-English summary of what was explained or discussed so far for the customer's live mobile screen)"
+  ],
+  "speakerTurns": [
+    {
+      "speaker": "AGENT" | "CLIENT",
+      "text": "string (verbatim or summarized turn text)",
+      "isQuestion": boolean,
+      "topic": "string"
+    }
   ],
   "clientQuestions": [
     {
@@ -174,7 +202,13 @@ Output JSON format strictly in English:
           conversationSummary: Array.isArray(parsed.conversationSummary) && parsed.conversationSummary.length > 0
             ? parsed.conversationSummary
             : ["Advisor reviewed core policy coverage, monthly premiums, and statutory free-look cancellation terms."],
-          clientQuestions: Array.isArray(parsed.clientQuestions) ? parsed.clientQuestions : [],
+          clientQuestions: Array.isArray(parsed.clientQuestions)
+            ? parsed.clientQuestions.map((q: any, idx: number) => ({
+                ...q,
+                id: q.id ? `${q.id}_${Date.now()}_${idx}` : `q_${Date.now()}_${idx}`,
+              }))
+            : [],
+          speakerTurns: Array.isArray(parsed.speakerTurns) ? parsed.speakerTurns : [],
           coveredSectionIds: Array.isArray(parsed.coveredSectionIds) ? parsed.coveredSectionIds : [1],
           auditEngine: "google-gemini-live",
           modelUsed: GEMINI_MODEL,
@@ -229,7 +263,7 @@ Output JSON format strictly in English:
                   role: "user",
                   parts: [
                     {
-                      text: "Transcribe ONLY human speech verbatim in English with accurate punctuation. If the audio is silent or contains no distinct words, reply EMPTY.",
+                      text: "You are transcribing an audio recording from an insurance advisory consultation between a licensed Financial Adviser (Insurance Agent) and a prospective Client. Transcribe ONLY human speech verbatim in English with accurate punctuation, preserving questions asked by the prospect versus explanations given by the adviser. If the audio is silent or contains no distinct words, reply EMPTY.",
                     },
                     {
                       inlineData: {
@@ -290,7 +324,37 @@ Output JSON format strictly in English:
   private static evaluateHeuristicDialogue(snippet: string, timestamp: string): CopilotAnalysisResult {
     const lower = snippet.toLowerCase();
 
-    // 1. Check for Q&A turns with pre-existing condition or non-disclosure violations
+    // 0. Extract Speaker Turns (Agent Explanation vs Client Inquiry)
+    const isClientQuestion = lower.includes("?") || lower.startsWith("can i") || lower.startsWith("what if") || lower.startsWith("will my") || lower.startsWith("how do i") || lower.includes("client:") || lower.includes("customer:");
+    const speakerTurns: { speaker: "AGENT" | "CLIENT"; text: string; isQuestion?: boolean; topic?: string }[] = [];
+
+    if (lower.includes("client:") || lower.includes("agent:") || lower.includes("advisor:")) {
+      const parts = snippet.split(/(client:|agent:|advisor:|customer:)/i);
+      let currentRole: "AGENT" | "CLIENT" = "AGENT";
+      for (const part of parts) {
+        const p = part.trim();
+        if (/client:|customer:/i.test(p)) {
+          currentRole = "CLIENT";
+        } else if (/agent:|advisor:/i.test(p)) {
+          currentRole = "AGENT";
+        } else if (p.length > 0) {
+          speakerTurns.push({
+            speaker: currentRole,
+            text: p,
+            isQuestion: p.includes("?") || currentRole === "CLIENT",
+          });
+        }
+      }
+    }
+    if (speakerTurns.length === 0) {
+      speakerTurns.push({
+        speaker: isClientQuestion ? "CLIENT" : "AGENT",
+        text: snippet,
+        isQuestion: isClientQuestion,
+      });
+    }
+
+    // 1. Check for Q&A turns with pre-existing condition or non-disclosure violations (RED)
     if (
       (lower.includes("pre-existing") || lower.includes("hypertension") || lower.includes("diabetes") || lower.includes("cholesterol") || lower.includes("condition") || lower.includes("diagnos")) &&
       (lower.includes("don't declare") || lower.includes("dont declare") || lower.includes("leave that section blank") || lower.includes("leave it blank") || lower.includes("no need to mention") || lower.includes("approves everyone") || lower.includes("don't even need to declare"))
@@ -346,12 +410,13 @@ Output JSON format strictly in English:
             timestamp,
           },
         ],
+        speakerTurns,
         coveredSectionIds: [1, 3],
         timestamp,
       };
     }
 
-    // 2. Check for early surrender penalty concealment
+    // 2. Check for early surrender penalty concealment (RED)
     if (
       (lower.includes("withdraw") || lower.includes("penalty") || lower.includes("surrender") || lower.includes("cancel") || lower.includes("year 2 or 3") || lower.includes("university")) &&
       (lower.includes("zero penalty") || lower.includes("no penalty") || lower.includes("anytime you want") || lower.includes("bank account") || lower.includes("functions just like"))
@@ -407,12 +472,13 @@ Output JSON format strictly in English:
             timestamp,
           },
         ],
+        speakerTurns,
         coveredSectionIds: [2, 4],
         timestamp,
       };
     }
 
-    // 3. Predatory & Deceptive Pitch Detection (Aggressive tactics, false exclusivity, pressure signing)
+    // 3. Predatory & Deceptive Pitch Detection (Aggressive tactics, false exclusivity, pressure signing) (RED)
     if (
       lower.includes("shouldn't even be showing") ||
       lower.includes("reserved for our high net worth") ||
@@ -499,12 +565,79 @@ Output JSON format strictly in English:
             timestamp,
           },
         ],
+        speakerTurns,
         coveredSectionIds: [1, 2, 4],
         timestamp,
       };
     }
 
-    // 4. Compliant pitch with pre-existing disclosure and section 25(5)
+    // 4. Agent Statement Misalignment with MAS (YELLOW)
+    if (
+      lower.includes("no need to read") ||
+      lower.includes("standard boilerplate") ||
+      lower.includes("don't worry about the fine print") ||
+      lower.includes("skip the summary") ||
+      lower.includes("fee is minimal") ||
+      lower.includes("discount expires today") ||
+      lower.includes("limited time offer") ||
+      lower.includes("exclusive discount") ||
+      lower.includes("hurry and close")
+    ) {
+      return {
+        isCompliant: false,
+        warningFlags: "YELLOW",
+        confidenceScore: 0.89,
+        detectedIssues: [
+          {
+            type: "AGGRESSIVE_TACTIC",
+            severity: "medium",
+            confidence: 0.89,
+            triggerSnippet: snippet,
+            explanation:
+              "Agent statement misaligned with MAS Fair Dealing: Discouraged client from reading the policy summary or created urgency before signing.",
+          },
+        ],
+        auditedQnAs: [
+          {
+            clientQuestion: "Should I review the full terms and summary before signing?",
+            advisorAnswer: "Suggested skipping reading or that fine print is standard boilerplate",
+            isCompliant: false,
+            flag: "YELLOW",
+            topic: "OTHER",
+            regulatoryNotice: "MAS Guidelines on Fair Dealing",
+            explanation: "Advisers must encourage clients to review summary documents before signing.",
+            compliantScript: "Mdm. Tan, please take all the time you need to review every section of the policy summary.",
+          },
+        ],
+        suggestedAnswers: [
+          {
+            questionOrObjection: "Policy Terms Review",
+            suggestedResponse: "Mdm. Tan, please review the plain-language summary and verify all details at your own pace.",
+            cheatSheetBullet: "Encourage client to review policy terms at their own pace.",
+          },
+        ],
+        conversationSummary: [
+          "Advisor mentioned policy benefits and suggested proceeding with signing.",
+          "Under MAS regulations, you have full rights to review all simplified clauses without pressure.",
+        ],
+        clientQuestions: [
+          {
+            id: "q_rev_01",
+            question: "Should I review the full terms and summary before signing?",
+            advisorAnswer: "Suggested skipping or that it is standard boilerplate",
+            status: "NEEDS_CLARIFICATION",
+            statusLabel: "Needs clarification",
+            topic: "OTHER",
+            timestamp,
+          },
+        ],
+        speakerTurns,
+        coveredSectionIds: [1, 2],
+        timestamp,
+      };
+    }
+
+    // 5. Compliant pitch with pre-existing disclosure and section 25(5) (GREEN)
     if (lower.includes("section 25") || lower.includes("waiting period") || lower.includes("450 monthly") || lower.includes("retiresafe")) {
       return {
         isCompliant: true,
@@ -548,12 +681,13 @@ Output JSON format strictly in English:
             timestamp,
           },
         ],
+        speakerTurns,
         coveredSectionIds: [1, 2, 3],
         timestamp,
       };
     }
 
-    // Default clean dialogue
+    // 6. Default clean dialogue (GREEN)
     const defaultCovered: number[] = [];
     if (lower.includes("cover") || lower.includes("benefit") || lower.includes("protection") || lower.includes("annuity")) defaultCovered.push(1);
     if (lower.includes("premium") || lower.includes("pay") || lower.includes("fee") || lower.includes("cost")) defaultCovered.push(2);
@@ -600,8 +734,120 @@ Output JSON format strictly in English:
           timestamp,
         },
       ],
+      speakerTurns,
       coveredSectionIds: defaultCovered.length > 0 ? defaultCovered : [1, 2],
       timestamp,
+    };
+  }
+
+  /**
+   * Biometric Face Verification using Google Gemini Multimodal Vision API
+   * Compares calibration reference face against current candidate face.
+   */
+  static async verifyBiometricFaceMatch(
+    calibrationImageBase64: string,
+    candidateImageBase64: string
+  ): Promise<BiometricFaceMatchResult> {
+    if (!this.isConfigured() || !calibrationImageBase64 || !candidateImageBase64) {
+      return {
+        isSamePerson: true,
+        matchPercentage: -1,
+        confidence: 0,
+        reason: "Offline fallback: Client-side MediaPipe landmark geometry active.",
+        source: "fallback-local-biometric",
+      };
+    }
+
+    const cleanBase64 = (dataUrl: string) => {
+      const commaIdx = dataUrl.indexOf(",");
+      return commaIdx !== -1 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+    };
+
+    const img1Clean = cleanBase64(calibrationImageBase64);
+    const img2Clean = cleanBase64(candidateImageBase64);
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_VISION_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    text: `You are an expert biometric facial identity verification auditor for Singapore Monetary Authority of Singapore (MAS) regulated banking and insurance digital consent.
+Examine and compare these two face images:
+- Image 1: Registered Calibrated Customer (Captured during Identity Onboarding).
+- Image 2: Candidate Signer (Captured immediately prior to digital consent).
+
+Biometric Verification Protocol:
+1. Strict Identity Discrimination: Are Image 1 and Image 2 the EXACT same human individual, or different people (different gender, different age, relative, or substitute)?
+2. If the gender appears different or the facial bone structure (jawline, cheekbones, nose bridge, eye spacing) belongs to a different person, you MUST set "isSamePerson": false and "matchPercentage": 20 or lower.
+3. Only set "isSamePerson": true if you are confident they are the exact same individual (accounting for natural expression or web camera angle changes).
+
+Respond strictly in valid JSON with this exact schema:
+{
+  "isSamePerson": boolean,
+  "matchPercentage": number, // integer from 0 to 100 (if different person or different gender, MUST be <= 25)
+  "confidence": number, // float from 0.0 to 1.0
+  "reason": "Clear explanation of biometric features compared and conclusion"
+}`,
+                  },
+                  {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: img1Clean,
+                    },
+                  },
+                  {
+                    inlineData: {
+                      mimeType: "image/jpeg",
+                      data: img2Clean,
+                    },
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.1,
+            },
+          }),
+        }
+      );
+
+      const data = await response.json();
+      const contentText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (contentText) {
+        const parsed = JSON.parse(contentText);
+        const isSame = Boolean(parsed.isSamePerson);
+        let matchPct = Math.round(parsed.matchPercentage ?? (isSame ? 92 : 20));
+        if (!isSame) {
+          matchPct = Math.min(matchPct, 28);
+        } else {
+          matchPct = Math.max(matchPct, 80);
+        }
+        return {
+          isSamePerson: isSame,
+          matchPercentage: Math.max(0, Math.min(100, matchPct)),
+          confidence: Math.max(0, Math.min(1.0, parsed.confidence ?? 0.95)),
+          reason: parsed.reason || (isSame ? "Biometric landmarks match verified." : "Biometric mismatch detected."),
+          source: "gemini-vision-ai",
+        };
+      }
+    } catch (err) {
+      console.warn("Gemini Vision biometric verification failed, using fallback:", err);
+    }
+
+    return {
+      isSamePerson: true,
+      matchPercentage: -1,
+      confidence: 0,
+      reason: "Local MediaPipe biometric geometric match active (offline fallback).",
+      source: "fallback-local-biometric",
     };
   }
 }

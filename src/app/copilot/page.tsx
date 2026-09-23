@@ -1081,6 +1081,38 @@ export default function CopilotTestPage() {
                   </div>
                 )}
 
+                {/* Speaker Turn Differentiation Feed (Advisor vs Prospect Client) */}
+                {result.speakerTurns && result.speakerTurns.length > 0 && (
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Dialogue Turns (Advisor vs Prospect Client)
+                    </span>
+                    <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                      {result.speakerTurns.map((turn, tIdx) => (
+                        <div
+                          key={tIdx}
+                          className={`p-2 rounded-xl text-xs flex items-start gap-2 border ${
+                            turn.speaker === "CLIENT"
+                              ? "bg-blue-950/40 border-blue-800/60 text-blue-200"
+                              : "bg-slate-800/60 border-slate-700/60 text-slate-200"
+                          }`}
+                        >
+                          <span
+                            className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md shrink-0 mt-0.5 ${
+                              turn.speaker === "CLIENT"
+                                ? "bg-blue-600 text-white"
+                                : "bg-slate-700 text-slate-200"
+                            }`}
+                          >
+                            {turn.speaker === "CLIENT" ? "Prospect Client" : "Advisor Andi"}
+                          </span>
+                          <span className="text-[11px] leading-relaxed">{turn.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Detected Issues */}
                 {result.detectedIssues && result.detectedIssues.length > 0 && (
                   <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-2xl space-y-2">
