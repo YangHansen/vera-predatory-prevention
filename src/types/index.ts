@@ -95,6 +95,13 @@ export interface ClientQuestionItem {
   timestamp: string;
 }
 
+export interface SpeakerTurn {
+  speaker: "AGENT" | "CLIENT";
+  text: string;
+  isQuestion?: boolean;
+  topic?: string;
+}
+
 export interface CopilotAnalysisResult {
   isCompliant: boolean;
   warningFlags: ComplianceFlag; // GREEN, YELLOW, or RED
@@ -108,6 +115,7 @@ export interface CopilotAnalysisResult {
   }[];
   conversationSummary?: string[];
   clientQuestions?: ClientQuestionItem[];
+  speakerTurns?: SpeakerTurn[];
   coveredSectionIds?: number[];
   auditEngine?: "google-gemini-live" | "mas-regulatory-rules-fallback";
   modelUsed?: string;
@@ -118,7 +126,7 @@ export interface ConfusionEvent {
   id: string;
   timestamp: string; // Clock time (e.g. "14:52:10")
   relativeSeconds: number; // Elapsed seconds into session/review (e.g. 84)
-  triggerType: "BROW_FURROW" | "SQUINT_HESITATION" | "PUZZLED_TILT" | "MANUAL_PAUSE";
+  triggerType: "BROW_FURROW" | "SQUINT_HESITATION" | "PUZZLED_TILT" | "MANUAL_PAUSE" | "HAND_TO_HEAD";
   intensity: "mild" | "moderate" | "high";
   activeTopic?: string; // Topic being discussed (e.g. "Early Surrender Penalty")
   speechSnippet?: string; // Spoken advisor statement or clause phrase at that moment
@@ -147,6 +155,7 @@ export interface LivenessTelemetry {
   score: number;
   confusionDetected: boolean;
   confusionEventsCount: number;
+  confusionScore?: number;
   timeSpentReviewingSeconds: number;
   timerFallbackTriggered: boolean;
   confusionEvents?: ConfusionEvent[];
@@ -173,6 +182,9 @@ export interface BranchingResult {
   customerFacingMessage: string;
   internalAuditNotes: string[];
   submittedAt: string;
+  reasonCategory?: "CLEAN_PASS" | "AGENT_MISALIGNMENT" | "CUSTOMER_CONFUSION" | "COMPOUND_RISK" | "INVALID_SIGNATURE";
+  confusionScore?: number;
+  confusionCount?: number;
 }
 
 export interface ComplianceCertificate {
