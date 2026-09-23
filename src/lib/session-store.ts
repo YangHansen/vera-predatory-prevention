@@ -161,7 +161,10 @@ export class SessionStore {
         const prev = map.get(key);
         map.set(key, { ...(prev || {}), ...q });
       });
-      session.clientQuestions = Array.from(map.values());
+      session.clientQuestions = Array.from(map.values()).map((q, idx) => ({
+        ...q,
+        id: q.id ? `${q.id.replace(/_\d+$/, "")}_${idx}` : `q_${Date.now()}_${idx}`,
+      }));
     }
 
     if (event.coveredSectionIds && event.coveredSectionIds.length > 0) {

@@ -73,35 +73,87 @@ async function runTests() {
   console.log(`   - Advisor Cheat Sheet: ${analysis1.suggestedAnswers[0]?.suggestedResponse}`);
   SessionStore.addCopilotEvent(session.id, analysis1);
 
-  // Case B: Compliant Advisory Dialogue
-  const compliantText = "Mdm. Tan, this S$450 monthly premium provides retirement annuity security and S$250,000 protection.";
+  // Case B: Compliant Advisory Dialogue with Speaker Turns
+  const compliantText = "Client: What are my regular monthly premiums? Agent: Mdm. Tan, this S$450 monthly premium provides retirement annuity security and S$250,000 protection.";
   const analysis2 = await GeminiService.analyzeSalesDialogue(compliantText);
   console.log(`✅ Compliant Advisory Dialogue Test:`);
   console.log(`   - Compliant: ${analysis2.isCompliant} (Flag: ${analysis2.warningFlags})`);
+  console.log(`   - Speaker Turns Identified: ${analysis2.speakerTurns?.length || 0} turns`);
+  if (analysis2.speakerTurns && analysis2.speakerTurns.length > 0) {
+    console.log(`   - Turn 1: [${analysis2.speakerTurns[0].speaker}] ${analysis2.speakerTurns[0].text}`);
+  }
 
-  // Case C: Audio Transcription Test
+  // Case C: Agent Misaligned Statement with MAS (Yellow Flag Trigger 1)
+  const misalignedText = "Agent: Don't worry about reading all the fine print, the fee is minimal and you can skip the summary.";
+  const analysisMisaligned = await GeminiService.analyzeSalesDialogue(misalignedText);
+  console.log(`✅ Agent Misaligned Dialogue Test:`);
+  console.log(`   - Compliant: ${analysisMisaligned.isCompliant} (Flag: ${analysisMisaligned.warningFlags})`);
+
+  // Case D: Audio Transcription Test
   console.log("\n   Testing Audio Speech-to-Text Transcription Engine...");
   const mockAudioBase64 = "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwH/////////FUmpZpkq17GDD0JAe5CQEZY=";
   const transcribeResult = await GeminiService.transcribeAudio(mockAudioBase64, "audio/webm");
   console.log(`✅ Audio Transcription Result (Engine: ${transcribeResult.engine})`);
 
   // 6. Test Branching Logic Engine (FR-06)
-  console.log("\n6️⃣ Testing Branching Logic Engine (Fast-Track vs Manual Review)...");
+  console.log("\n6️⃣ Testing Branching Logic Engine (Fast-Track vs Manual Review Calculation)...");
   
+  // Test 6A: Clean Pass (GREEN) - Normal Attentive Reading & Deliberation (3 events, 4 pts)
   const greenResult = BranchingEngine.evaluate({
     liveness: {
       passed: true,
       score: 0.98,
       confusionDetected: false,
-      confusionEventsCount: 0,
+      confusionEventsCount: 3, // 3 normal reading glances (4 pts) - below threshold of 8 pts / 6 events
+      confusionScore: 4,
       timeSpentReviewingSeconds: 45,
       timerFallbackTriggered: false,
     },
     copilotEvents: [analysis2],
     hasValidSignature: true,
   });
-  console.log(`✅ Green Branching Result: Flag = ${greenResult.flag} | FastTrack = ${greenResult.fastTrackApproved} | Est. Days = ${greenResult.estimatedReviewDays}`);
-  console.log(`   Customer Message: "${greenResult.customerFacingMessage}"`);
+  console.log(`✅ Test 6A (Clean Pass): Flag = ${greenResult.flag} | Reason = ${greenResult.reasonCategory} | FastTrack = ${greenResult.fastTrackApproved}`);
+  console.log(`   Internal Audit Note: "${greenResult.internalAuditNotes[0]}"`);
+
+  // Test 6B: Trigger 1 - Agent Misalignment Statement (YELLOW)
+  const yellowAgentResult = BranchingEngine.evaluate({
+    liveness: {
+      passed: true,
+      score: 0.98,
+      confusionDetected: false,
+      confusionEventsCount: 0,
+      confusionScore: 0,
+      timeSpentReviewingSeconds: 30,
+      timerFallbackTriggered: false,
+    },
+    copilotEvents: [analysisMisaligned],
+    hasValidSignature: true,
+  });
+  console.log(`✅ Test 6B (Trigger 1 - Agent Misalignment): Flag = ${yellowAgentResult.flag} | Reason = ${yellowAgentResult.reasonCategory} | Est. Days = ${yellowAgentResult.estimatedReviewDays}`);
+  console.log(`   Internal Audit Note: "${yellowAgentResult.internalAuditNotes[0]}"`);
+
+  // Test 6C: Trigger 2 - Compliant Agent Statements BUT Elevated Customer Confusion (YELLOW)
+  const yellowConfusionResult = BranchingEngine.evaluate({
+    liveness: {
+      passed: true,
+      score: 0.98,
+      confusionDetected: true,
+      confusionEventsCount: 6, // 6 events / score 9 (exceeds 8 pts / 6 events threshold)
+      confusionScore: 9,
+      confusionEvents: [
+        { id: "c1", timestamp: "14:02", relativeSeconds: 12, triggerType: "BROW_FURROW", intensity: "moderate" },
+        { id: "c2", timestamp: "14:05", relativeSeconds: 24, triggerType: "PUZZLED_TILT", intensity: "moderate" },
+        { id: "c3", timestamp: "14:08", relativeSeconds: 36, triggerType: "HAND_TO_HEAD", intensity: "high" },
+        { id: "c4", timestamp: "14:12", relativeSeconds: 48, triggerType: "BROW_FURROW", intensity: "moderate" },
+      ],
+      timeSpentReviewingSeconds: 60,
+      timerFallbackTriggered: false,
+    },
+    copilotEvents: [analysis2], // 100% compliant agent dialogue!
+    hasValidSignature: true,
+  });
+  console.log(`✅ Test 6C (Trigger 2 - Customer Elevated Confusion): Flag = ${yellowConfusionResult.flag} | Reason = ${yellowConfusionResult.reasonCategory} | Est. Days = ${yellowConfusionResult.estimatedReviewDays}`);
+  console.log(`   Internal Audit Note: "${yellowConfusionResult.internalAuditNotes[0]}"`);
 
   // Record consent submission on session
   SessionStore.recordConsentSubmission(session.id, "data:image/png;base64,mockSig", greenResult);
