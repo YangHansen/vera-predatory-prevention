@@ -5,7 +5,13 @@ import { SessionStore } from "@/lib/session-store";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { agentId, customerName, customerPhone, policyId, baseUrl: customBaseUrl } = body;
+    const {
+      agentId,
+      customerName,
+      customerPhone,
+      policyId,
+      baseUrl: customBaseUrl,
+    } = body;
 
     // Detect request origin, respecting client customBaseUrl or headers
     const detectedOrigin =
@@ -23,6 +29,11 @@ export async function POST(req: NextRequest) {
       baseUrl: detectedOrigin,
     });
 
+    if (body.clientExperience === "workspace")
+      SessionStore.updateSession(session.id, {
+        customerUrl: `${detectedOrigin}/client/${session.id}`,
+      });
+
     // Generate QR Code Data URL for the customer hand-off link
     if (session.customerUrl) {
       session.qrCodeDataUrl = await QRCode.toDataURL(session.customerUrl, {
@@ -34,7 +45,10 @@ export async function POST(req: NextRequest) {
           light: "#ffffff",
         },
       });
-      session.status = "QR_GENERATED";
+      SessionStore.updateSession(session.id, {
+        status: "QR_GENERATED",
+        qrCodeDataUrl: session.qrCodeDataUrl,
+      });
     }
 
     return NextResponse.json({
@@ -48,7 +62,7 @@ export async function POST(req: NextRequest) {
         success: false,
         error: "Failed to initialize session and QR code",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

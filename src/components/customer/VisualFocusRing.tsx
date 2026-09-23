@@ -55,6 +55,8 @@ const MEDIAPIPE_CONTOURS = {
 };
 
 interface VisualFocusRingProps {
+  compact?: boolean;
+  minimized?: boolean;
   mode?: FocusRingMode;
   onTelemetryUpdate?: (telemetry: {
     passed: boolean;
@@ -86,6 +88,8 @@ interface VisualFocusRingProps {
 }
 
 export default function VisualFocusRing({
+  compact = false,
+  minimized = false,
   mode = "FOCUS_MONITOR",
   onTelemetryUpdate,
   reviewTimeSeconds = 0,
@@ -422,11 +426,11 @@ export default function VisualFocusRing({
   }, []);
 
   useEffect(() => {
-    startCamera();
+    if (!compact) startCamera();
     return () => {
       stopCamera();
     };
-  }, [startCamera, stopCamera]);
+  }, [startCamera, stopCamera, compact]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1515,6 +1519,19 @@ export default function VisualFocusRing({
 
     return () => clearInterval(interval);
   }, [cameraActive, mode]);
+
+  if (compact) return (
+    <section className={`camera-preview camera-compact ${minimized ? "camera-minimized" : ""}`} aria-label="Camera verification">
+      <div className="camera-preview-heading"><h2>{mode === "CALIBRATION" ? "Your camera preview" : "Final camera check"}</h2><span>{cameraActive ? "Camera on" : "Camera off"}</span></div>
+      <div className={`camera-viewfinder ${cameraActive ? "is-live" : ""}`}>
+        <video ref={videoRef} autoPlay playsInline muted aria-label="Your live camera preview" />
+        <canvas ref={canvasRef} hidden /><canvas ref={overlayCanvasRef} hidden />
+        {!cameraActive && <div className="camera-placeholder"><Camera size={28}/><strong>You’ll see yourself here</strong></div>}
+      </div>
+      <div className="camera-controls"><button className="v-button secondary full" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Turn camera off" : "Turn on camera"}</button></div>
+      <p className="camera-privacy" role="status">{!cameraActive ? "Enable your camera to run the check." : mode === "CALIBRATION" ? calibrationProgress >= 100 ? "Opening check complete" : positioningHint : nodAgreed ? "Face and nod check complete" : faceMatchVerified ? "Look at the camera and nod to confirm." : faceMatchReason}</p>
+    </section>
+  );
 
   // Calibration Screen Layout (Step 2)
   if (mode === "CALIBRATION") {

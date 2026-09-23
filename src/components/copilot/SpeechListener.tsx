@@ -5,6 +5,7 @@ import { AlertCircle, Sparkles, Cpu, Globe, Radio, Zap, Activity } from "lucide-
 import type { SttEngineMode } from "@/types";
 
 interface SpeechListenerProps {
+  minimal?: boolean;
   onTranscript: (text: string) => void;
   isListening: boolean;
   onToggleListening: (listening: boolean) => void;
@@ -98,6 +99,7 @@ function encodeWavBase64(samples: Float32Array, sampleRate = 16000): string {
 }
 
 export function SpeechListener({
+  minimal = false,
   onTranscript,
   isListening,
   onToggleListening,
@@ -697,6 +699,7 @@ export function SpeechListener({
     };
   }, [isListening, selectedEngine, startGeminiLiveSTT, startBrowserSpeech, startGoogleCloudSTT, cleanupAll]);
 
+  if (minimal) return errorMsg ? <p role="alert" className="form-error">{errorMsg}</p> : null;
   return (
     <div className="space-y-3">
       {/* Engine Switcher Bar */}

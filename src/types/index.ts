@@ -249,6 +249,10 @@ export interface Session {
   qrCodeDataUrl?: string;
   customerUrl?: string;
   copilotEvents: CopilotAnalysisResult[];
+  presentedTopic?: number;
+  clientQuestion?: string;
+  recordingConsent?: boolean;
+  cameraConsent?: boolean;
   syncedHighlight?: SyncedClauseHighlight;
   liveDialogueBuffer?: string;
   conversationSummary?: string[];

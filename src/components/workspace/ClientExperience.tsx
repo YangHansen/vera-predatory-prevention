@@ -15,13 +15,30 @@ import {
   Trash2,
 } from "lucide-react";
 import { Brand } from "./Brand";
+import VisualFocusRing from "@/components/customer/VisualFocusRing";
+import type { LivenessTelemetry, ConfusionEvent } from "@/types";
 import { CameraPreview } from "./CameraPreview";
 import { useDemoSession } from "./useDemoSession";
 import { DUMMY_POLICIES } from "@/lib/dummy-data";
 import { downloadText } from "@/lib/frontend-demo";
 
 export function ClientExperience({ id }: { id: string }) {
-  const { session, ready, update, error } = useDemoSession(id);
+  const { session, ready, update, error, live, busy, refresh } =
+    useDemoSession(id);
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [mesh, setMesh] = useState<number[] | null>(null);
+  const [faceImage, setFaceImage] = useState<string | null>(null);
+  const telemetry = useRef<LivenessTelemetry>({
+    passed: false,
+    score: 0,
+    confusionDetected: false,
+    confusionEventsCount: 0,
+    timeSpentReviewingSeconds: 0,
+    timerFallbackTriggered: false,
+  });
+  const confusion = useRef<ConfusionEvent[]>([]);
+  const reviewStarted = useRef(0);
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [reviewStep, setReviewStep] = useState(0);
   const [audioConsent, setAudioConsent] = useState(false);
@@ -30,7 +47,6 @@ export function ClientExperience({ id }: { id: string }) {
   const [finalChecked, setFinalChecked] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [topic, setTopic] = useState(0);
-  const [conversationView, setConversationView] = useState("Following along");
   const [help, setHelp] = useState(false);
   const [question, setQuestion] = useState("");
   const [questionSent, setQuestionSent] = useState(false);
@@ -43,9 +59,11 @@ export function ClientExperience({ id }: { id: string }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const previousPhase = useRef(session?.phase);
   const policy =
+    session?.policyData ||
     DUMMY_POLICIES.find((p) =>
       p.name.startsWith(session?.policy || "missing"),
-    ) || DUMMY_POLICIES[0];
+    ) ||
+    DUMMY_POLICIES[0];
   const terms = [
     {
       title: "Your premium",
@@ -57,6 +75,17 @@ export function ClientExperience({ id }: { id: string }) {
       body,
       detail: "Ask Andi if you would like this explained.",
     })),
+    ...(session?.phase === "review"
+      ? (
+          session.conversationSummary?.split("\n").filter(Boolean) || [
+            "Review the points discussed with your advisor before signing.",
+          ]
+        ).map((body) => ({
+          title: "Conversation summary",
+          body,
+          detail: "Ask your advisor to clarify anything before you agree.",
+        }))
+      : []),
   ];
   const nodStep = terms.length + 1;
   const consentStep = nodStep + 1;
@@ -64,10 +93,36 @@ export function ClientExperience({ id }: { id: string }) {
   const reviewTotal = signatureStep + 1;
   const phase = session?.phase;
   useEffect(() => {
-    setTopic(session?.presentedTopic ?? 0);
+    if (!live || phase !== "review") return;
+    const timer = setInterval(() => {
+      fetch(`/api/session/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telemetry: {
+            ...telemetry.current,
+            confusionEvents: confusion.current,
+            confusionEventsCount: confusion.current.length,
+            timeSpentReviewingSeconds: Math.floor(
+              (Date.now() - reviewStarted.current) / 1000,
+            ),
+          },
+        }),
+      }).catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [id, live, phase]);
+  useEffect(() => {
+    setTopic(
+      Math.min(
+        Math.max(session?.presentedTopic ?? 0, 0),
+        policy.simplifiedSummary.length,
+      ),
+    );
   }, [session?.presentedTopic]);
   useEffect(() => {
     if (previousPhase.current !== phase) {
+      if (phase === "review") reviewStarted.current = Date.now();
       setReviewStep(0);
       setFinalChecked(false);
       setAcknowledged(false);
@@ -128,7 +183,7 @@ export function ClientExperience({ id }: { id: string }) {
       <div className="client-app missing-session">
         <Brand />
         <h1>Session unavailable</h1>
-        <p>Open this demo in the same browser as the agent workspace.</p>
+        <p>{error || "Ask your advisor for a valid session link."}</p>
         <Link href="/" className="v-button primary">
           Back to workspace
         </Link>
@@ -141,7 +196,7 @@ export function ClientExperience({ id }: { id: string }) {
   const minimizeCamera =
     reviewing && reviewStep !== 0 && reviewStep !== nodStep;
   const activeTerm = terms[Math.max(0, reviewStep - 1)];
-  let title = "Your conversation";
+  let title = "Following along";
   if (welcome)
     title = [
       `Welcome, ${session.name.split(" ")[0]}.`,
@@ -165,48 +220,125 @@ export function ClientExperience({ id }: { id: string }) {
   const stageLabel = welcome
     ? "Before we start"
     : reviewing
-      ? "Review & consent"
+      ? "Summary & consent"
       : signed
         ? "Complete"
         : "Conversation";
   const step = welcome ? welcomeStep + 1 : reviewing ? reviewStep + 1 : 1;
   const total = welcome ? 4 : reviewing ? reviewTotal : 1;
-  function next() {
+  async function next() {
+    if (submitting || busy) return;
     if (welcome) {
       if (welcomeStep < 3) setWelcomeStep((s) => s + 1);
       else {
-        setFaceChecked(true);
-        update({ phase: "conversation", status: "In progress" });
+        if (live) {
+          try {
+            const response = await fetch(`/api/session/${id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                recordingConsent: audioConsent,
+                cameraConsent: cameraConsent,
+              }),
+            });
+            if (!response.ok) throw new Error("Could not save permissions.");
+          } catch {
+            setSubmitError("Could not save permissions. Try again.");
+            return;
+          }
+        } else setFaceChecked(true);
+        await update({ phase: "conversation", status: "In progress" });
       }
     } else if (reviewing) {
-      if (reviewStep === nodStep) setFinalChecked(true);
+      if (reviewStep === nodStep && !live) setFinalChecked(true);
       if (reviewStep < signatureStep) setReviewStep((s) => s + 1);
-      else if (finalChecked && acknowledged && !session?.question)
-        update({ phase: "signed", status: "Needs review" });
+      else if (finalChecked && acknowledged && !session?.question) {
+        if (!live) {
+          await update({ phase: "signed", status: "Needs review" });
+          return;
+        }
+        setSubmitting(true);
+        setSubmitError("");
+        try {
+          let signatureDataUrl = drawnSignature;
+          if (signatureMode === "type") {
+            const signature = document.createElement("canvas");
+            signature.width = 600;
+            signature.height = 150;
+            const context = signature.getContext("2d");
+            if (!context) throw new Error("Signature unavailable");
+            context.font = "italic 40px serif";
+            context.fillStyle = "#172b4d";
+            context.fillText(typedSignature.trim(), 20, 85, 560);
+            signatureDataUrl = signature.toDataURL("image/png");
+          }
+          const response = await fetch("/api/consent/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sessionId: id,
+              customerId: session?.name,
+              policyId: policy.id,
+              signatureDataUrl,
+              liveness: {
+                ...telemetry.current,
+                confusionEvents: confusion.current,
+                confusionEventsCount: confusion.current.length,
+                confusionDetected: confusion.current.length > 0,
+                timeSpentReviewingSeconds: Math.floor(
+                  (Date.now() - reviewStarted.current) / 1000,
+                ),
+                calibratedFaceMeshAvailable: Boolean(mesh),
+              },
+              agentAudioAuditPassed: !session?.backend?.copilotEvents.some(
+                (e) => e.warningFlags !== "GREEN",
+              ),
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok || !data.success)
+            throw new Error(data.error || "Submission failed");
+          setFaceImage(null);
+          setMesh(null);
+          await refresh();
+        } catch (e) {
+          setSubmitError(
+            e instanceof Error ? e.message : "Submission failed. Try again.",
+          );
+        } finally {
+          setSubmitting(false);
+        }
+      }
     } else if (phase === "conversation") update({ phase: "review" });
   }
   const signatureValid =
     signatureMode === "type"
       ? typedSignature.trim().length > 1
       : Boolean(drawnSignature);
-  const disabled = welcome
-    ? (welcomeStep === 1 && !audioConsent) ||
-      (welcomeStep === 2 && !cameraConsent)
-    : reviewing
-      ? (reviewStep === consentStep &&
-          (!acknowledged || Boolean(session.question))) ||
-        (reviewStep === signatureStep &&
-          (!signatureValid ||
-            !finalChecked ||
-            !acknowledged ||
-            Boolean(session.question)))
-      : false;
+  const disabled =
+    (live && reviewing && !mesh) ||
+    submitting ||
+    busy ||
+    (live && welcome && welcomeStep === 3 && !faceChecked) ||
+    (live && reviewing && reviewStep === nodStep && !finalChecked) ||
+    (welcome
+      ? (welcomeStep === 1 && !audioConsent) ||
+        (welcomeStep === 2 && !cameraConsent)
+      : reviewing
+        ? (reviewStep === consentStep &&
+            (!acknowledged || Boolean(session.question))) ||
+          (reviewStep === signatureStep &&
+            (!signatureValid ||
+              !finalChecked ||
+              !acknowledged ||
+              Boolean(session.question)))
+        : false);
   const action = welcome
     ? [
         "Get started",
         "Agree and continue",
         "Agree and continue",
-        "Simulate identity check & join",
+        live ? "Join conversation" : "Simulate identity check & join",
       ][welcomeStep]
     : reviewing
       ? reviewStep === 0
@@ -216,11 +348,17 @@ export function ClientExperience({ id }: { id: string }) {
           : reviewStep === terms.length
             ? "Continue to identity check"
             : reviewStep === nodStep
-              ? "Simulate face match & nod"
+              ? live
+                ? "Confirm and continue"
+                : "Simulate face match & nod"
               : reviewStep === consentStep
                 ? "Continue to signature"
-                : "Submit demo consent"
-      : "Preview final review";
+                : live
+                  ? "Submit consent"
+                  : "Submit demo consent"
+      : live
+        ? "Begin final review"
+        : "Preview final review";
   const canBack = welcome
     ? welcomeStep > 0
     : reviewing
@@ -241,7 +379,9 @@ export function ClientExperience({ id }: { id: string }) {
           </span>
         </header>
         <div className="wizard-demo">
-          Preview · no recording or real application
+          {live
+            ? "Connected session"
+            : "Preview · no recording or real application"}
         </div>
         <main className="wizard-main">
           <div className="wizard-progress">
@@ -257,9 +397,9 @@ export function ClientExperience({ id }: { id: string }) {
             <h1 ref={heading} tabIndex={-1}>
               {title}
             </h1>
-            {error && (
+            {(error || submitError) && (
               <p className="wizard-error" role="alert">
-                {error}
+                {submitError || error}
               </p>
             )}
             {help ? (
@@ -290,7 +430,7 @@ export function ClientExperience({ id }: { id: string }) {
                     />
                   </label>
                   <p className="wizard-note">
-                    Your question appears in the agent tab in this browser.
+                    Your question appears in your advisor’s session.
                   </p>
                 </>
               )
@@ -337,7 +477,9 @@ export function ClientExperience({ id }: { id: string }) {
                       <span>I agree to the audio recording.</span>
                     </label>
                     <p className="wizard-note">
-                      This preview does not record audio.
+                      {live
+                        ? "Your advisor controls when recording starts and stops."
+                        : "This preview does not record audio."}
                     </p>
                   </>
                 )}
@@ -371,15 +513,17 @@ export function ClientExperience({ id }: { id: string }) {
                       <span>I agree to this camera use.</span>
                     </label>
                     <p className="wizard-note">
-                      Face images stay on your device. Nothing is saved or
-                      uploaded.
+                      {live
+                        ? "Face snapshots are sent to our server and Google Gemini for identity comparison."
+                        : "Face images stay on your device. Nothing is saved or uploaded."}
                     </p>
                   </>
                 )}
                 {welcome && welcomeStep === 3 && (
                   <p>
-                    Position your face in the frame. Identity matching is
-                    simulated in this preview.
+                    {live
+                      ? "Position your face in the frame for the opening check."
+                      : "Position your face in the frame. Identity matching is simulated in this preview."}
                   </p>
                 )}
                 {phase === "conversation" && (
@@ -388,10 +532,6 @@ export function ClientExperience({ id }: { id: string }) {
                       <CameraOff size={17} />
                       Camera off while you talk
                     </div>
-                    <div className="wizard-signature-tabs" role="group" aria-label="Conversation view">
-                      {["Following along", "Summary", "My question"].map(view => <button key={view} aria-pressed={conversationView === view} onClick={() => setConversationView(view)}>{view}</button>)}
-                    </div>
-                    {conversationView === "Summary" ? <article className="wizard-topic"><span>CONVERSATION SUMMARY · DEMO</span><p>{session.conversationSummary || "Your summary will appear as the agent plays the sample conversation."}</p></article> : conversationView === "My question" ? <article className="wizard-topic"><span>YOUR CONCERN</span><p>{session.question || "No open questions. Use Ask your advisor whenever something is unclear."}</p></article> : <>
                     <article className="wizard-topic">
                       <span>
                         POLICY DETAIL {topic + 1} OF {terms.length}
@@ -417,7 +557,6 @@ export function ClientExperience({ id }: { id: string }) {
                         <ArrowRight size={17} />
                       </button>
                     </div>
-                    </>}
                   </>
                 )}
                 {reviewing && reviewStep === 0 && (
@@ -429,7 +568,7 @@ export function ClientExperience({ id }: { id: string }) {
                 {reviewing && reviewStep > 0 && reviewStep <= terms.length && (
                   <>
                     <p className="wizard-term-number">
-                      POLICY DETAIL {reviewStep} OF {terms.length}
+                      SUMMARY {reviewStep} OF {terms.length}
                     </p>
                     <p className="wizard-term">{activeTerm.body}</p>
                     <p className="wizard-note">{activeTerm.detail}</p>
@@ -437,13 +576,43 @@ export function ClientExperience({ id }: { id: string }) {
                 )}
                 {reviewing && reviewStep === nodStep && (
                   <p>
-                    Look at the camera and give a small nod. This preview
-                    simulates the check; it does not verify your identity.
+                    {live
+                      ? "Look at the camera and give a small nod. Wait for the face and gesture check to complete."
+                      : "Look at the camera and give a small nod. This preview simulates the check."}
                   </p>
                 )}
-                {reviewing && reviewStep === consentStep && (
-                  session.question ? <><p className="wizard-error" role="status">Your question is still open. Talk it through with Andi before agreeing.</p><p>Andi needs to mark it as discussed. You can then confirm your understanding here.</p></> : <><p>Have all your questions been answered?</p><label className="wizard-check"><input type="checkbox" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)} /><span>I understand the policy, its costs and conditions, and have had my questions answered.</span></label><p className="wizard-note">Use Back to review a detail.</p></>
-                )}
+                {reviewing &&
+                  reviewStep === consentStep &&
+                  (session.question ? (
+                    <>
+                      <p className="wizard-error" role="status">
+                        Your question is still open. Talk it through with Andi
+                        before agreeing.
+                      </p>
+                      <p>
+                        Andi needs to mark it as discussed. You can then confirm
+                        your understanding here.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p>Have all your questions been answered?</p>
+                      <label className="wizard-check">
+                        <input
+                          type="checkbox"
+                          checked={acknowledged}
+                          onChange={(e) => setAcknowledged(e.target.checked)}
+                        />
+                        <span>
+                          I understand the policy, its costs and conditions, and
+                          have had my questions answered.
+                        </span>
+                      </label>
+                      <p className="wizard-note">
+                        Use Back to review a detail.
+                      </p>
+                    </>
+                  ))}
                 {reviewing && reviewStep === signatureStep && (
                   <>
                     <div
@@ -514,8 +683,8 @@ export function ClientExperience({ id }: { id: string }) {
                       <Check size={32} />
                     </div>
                     <p>
-                      Your demo consent has been received. Andi will explain
-                      what happens next.
+                      Your consent has been received. Andi will explain what
+                      happens next.
                     </p>
                     <dl className="wizard-receipt">
                       <div>
@@ -535,7 +704,59 @@ export function ClientExperience({ id }: { id: string }) {
                 )}
               </>
             )}
-            {showCamera && (
+            {live && reviewing && !mesh && (
+              <p className="wizard-error">
+                Opening camera data is unavailable after reloading.{" "}
+                <button
+                  className="text-button"
+                  onClick={() => void update({ phase: "welcome" })}
+                >
+                  Restart opening check
+                </button>
+              </p>
+            )}
+            {showCamera && live && (!reviewing || mesh) && (
+              <VisualFocusRing
+                compact
+                minimized={minimizeCamera}
+                mode={welcome ? "CALIBRATION" : "NOD_AND_VERIFY"}
+                activeTopic={
+                  reviewing && reviewStep > 0 && reviewStep <= terms.length
+                    ? activeTerm.title
+                    : "Policy review"
+                }
+                calibratedMesh={mesh}
+                calibratedFaceImage={faceImage}
+                onCalibrationComplete={(vector, image) => {
+                  setMesh(vector);
+                  setFaceImage(image || null);
+                  setFaceChecked(true);
+                }}
+                onTelemetryUpdate={(value) => {
+                  telemetry.current = { ...telemetry.current, ...value };
+                }}
+                onConfusionLogged={(event) => {
+                  if (!confusion.current.some((e) => e.id === event.id))
+                    confusion.current.push(event);
+                }}
+                onNodDetected={(agreed, confidence, matchScore) => {
+                  setFinalChecked(agreed);
+                  telemetry.current = {
+                    ...telemetry.current,
+                    passed: agreed,
+                    score: matchScore,
+                    gestureAgreement: {
+                      nodDetected: agreed,
+                      nodConfidence: confidence,
+                      shakeDetected: !agreed,
+                      faceMatchScore: matchScore,
+                      faceMatchPassed: matchScore >= 0.82,
+                    },
+                  };
+                }}
+              />
+            )}
+            {showCamera && !live && (
               <CameraPreview
                 stage={welcome ? "opening" : "review"}
                 checked={welcome ? faceChecked : finalChecked}
@@ -554,12 +775,12 @@ export function ClientExperience({ id }: { id: string }) {
                 <button
                   className="v-button primary full"
                   disabled={!questionSent && !question.trim()}
-                  onClick={() => {
+                  onClick={async () => {
                     if (questionSent) {
                       setHelp(false);
                       return;
                     }
-                    if (update({ question: question.trim() })) {
+                    if (await update({ question: question.trim() })) {
                       setAcknowledged(false);
                       setQuestionSent(true);
                     }
@@ -584,7 +805,7 @@ export function ClientExperience({ id }: { id: string }) {
                   onClick={() =>
                     downloadText(
                       `${id}-client-summary.txt`,
-                      `VERA DEMO SUMMARY — NOT A REAL APPLICATION\n${session.name}\n${session.policy}\nPremium: S$${policy.premiumAmount} ${policy.premiumFrequency}\n\n${policy.simplifiedSummary.join("\n\n")}\nYour advisor will explain next steps.`,
+                      `VERA SESSION SUMMARY\n${session.name}\n${session.policy}\nPremium: S$${policy.premiumAmount} ${policy.premiumFrequency}\n\n${policy.simplifiedSummary.join("\n\n")}\nYour advisor will explain next steps.`,
                     )
                   }
                 >
@@ -592,7 +813,7 @@ export function ClientExperience({ id }: { id: string }) {
                   Save summary
                 </button>
                 <Link className="wizard-help" href="/">
-                  Return to demo workspace
+                  Return to workspace
                 </Link>
               </>
             ) : (
@@ -609,22 +830,11 @@ export function ClientExperience({ id }: { id: string }) {
                     disabled={disabled}
                     onClick={next}
                   >
-                    {action}
+                    {submitting ? "Submitting…" : action}
                     <ArrowRight size={17} />
                   </button>
                 </div>
-                <button
-                  className="wizard-help"
-                  onClick={() => {
-                    setHelp(true);
-                    setQuestionSent(false);
-                  }}
-                >
-                  <MessageCircle size={16} />
-                  {session.question
-                    ? "View or ask a question"
-                    : "I have a question"}
-                </button>
+
               </>
             )}
           </footer>

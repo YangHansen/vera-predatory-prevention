@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
+import { SessionHistory } from "./SessionHistory";
+import { LiveConversation } from "./LiveConversation";
 import { Brand } from "./Brand";
 import { Modal, Status } from "./Workspace";
 import { useDemoSession } from "./useDemoSession";
@@ -29,7 +31,11 @@ import { DUMMY_POLICIES } from "@/lib/dummy-data";
 import { downloadText } from "@/lib/frontend-demo";
 
 export function SessionWorkspace({ id }: { id: string }) {
-  const { session, ready, update, error } = useDemoSession(id);
+  const { session, ready, update, error, live, busy, refresh } =
+    useDemoSession(id);
+  const [presentation,setPresentation]=useState(false);
+  const [presentationPhase,setPresentationPhase]=useState("conversation");
+  useEffect(()=>{setPresentation(new URLSearchParams(window.location.search).get("presentation") === "1");},[]);
   const [qr, setQr] = useState("");
   const [invite, setInvite] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -74,9 +80,72 @@ export function SessionWorkspace({ id }: { id: string }) {
       </div>
     );
   const policy =
+    session.policyData ||
     DUMMY_POLICIES.find((p) => p.name.startsWith(session.policy)) ||
     DUMMY_POLICIES[0];
+  const analysis = session.backend?.copilotEvents.at(-1);
   const ended = session.phase === "signed";
+  if (ended && !presentation) return <SessionHistory session={session} />;
+  if (
+    presentation || (live || session.isExample) &&
+    (session.phase === "conversation" || session.phase === "review")
+  ) {
+    const sampleBackend: import("@/types").Session = {
+      id: session.id,
+      agentId: "sample",
+      customerName: session.name,
+      policyId: policy.id,
+      status: (presentation ? presentationPhase : session.phase) === "review" ? "CUSTOMER_REVIEWING" : "HANDED_OFF",
+      recordingConsent: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      conversationSummary: session.conversationSummary?.split("\n") || ["You introduced the insurance policy.","Your client asked about the cost and how to cancel.","You reviewed where to find costs in the policy."],
+      clientQuestions: [
+        {
+          id: "sample-q1",
+          question: "What will I pay?",
+          status: "ANSWERED",
+          statusLabel: "Reviewed",
+          timestamp: "",
+        },
+        {
+          id: "sample-q2",
+          question: "How do I cancel?",
+          status: "PENDING",
+          statusLabel: "Needs explanation",
+          timestamp: "",
+        },
+      ],
+      copilotEvents: [
+        {
+          isCompliant: true,
+          warningFlags: "GREEN",
+          confidenceScore: 0.8,
+          detectedIssues: [],
+          suggestedAnswers: [
+            {
+              questionOrObjection: "How do I cancel?",
+              cheatSheetBullet:
+                "Ibu Siti asked how to cancel. Walk through the cancellation terms in plain language.",
+              suggestedResponse:
+                "Let’s review how cancellation works and any conditions that apply.",
+            },
+          ],
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+    return (
+      <LiveConversation
+        key={id}
+        session={presentation ? sampleBackend : session.backend || sampleBackend}
+        demo={presentation || !live}
+        onRefresh={refresh}
+        onReset={async () => {if(presentation){setPresentationPhase("conversation");return true;}return update({phase:"conversation"});}}
+        onEnd={async () => {if(presentation){setPresentationPhase("review");return true;}return update({phase:"review"});}}
+      />
+    );
+  }
   const messages = [
     {
       who: "Andi",
@@ -116,7 +185,7 @@ export function SessionWorkspace({ id }: { id: string }) {
         </span>
         <span className="demo-label">
           <span />
-          Interactive demo
+          {live ? "Connected session" : "Interactive demo"}
         </span>
       </header>
       <main className="session-main">
@@ -177,25 +246,27 @@ export function SessionWorkspace({ id }: { id: string }) {
             <span className="large-leaf-icon">
               <Users size={34} />
             </span>
+            <Link className="v-button primary" href={`/session/${id}?presentation=1`} onClick={()=>setPresentation(true)}>Preview conversation <ArrowRight size={16}/></Link>
             <span className="eyebrow">SESSION SETUP</span>
             <h2>Invite your client to begin.</h2>
             <p>
               Invite {session.name.split(" ")[0]} to follow along. Their welcome
-              screens explain recording, camera use, and the opening identity check
-              one step at a time.
+              screens explain recording, camera use, and the opening identity
+              check one step at a time.
             </p>
             <div className="disclosure-script">
               <strong>Before you begin, explain:</strong>
               <p>
                 “We’ll record the audio of our conversation so we can give you
                 an accurate summary. Your camera is used briefly at the
-                beginning and during your final review. Face images stay on your
-                device and aren’t saved.”
+                beginning and during your final review. Face snapshots are sent
+                to our server and Google Gemini for identity comparison.”
               </p>
             </div>
             <p className="fixture-note">
-              In this frontend demo, no recording or real identity verification
-              takes place.
+              {live
+                ? "The client must finish the opening steps before recording begins."
+                : "In this frontend demo, no recording or real identity verification takes place."}
             </p>
             <Link
               className="v-button primary"
@@ -227,53 +298,69 @@ export function SessionWorkspace({ id }: { id: string }) {
                     </button>
                   ))}
                 </div>
-                <span className="sample-tag">SAMPLE CONTENT</span>
+                <span className="sample-tag">
+                  {live ? "LIVE SESSION" : "SAMPLE CONTENT"}
+                </span>
               </div>
+              {live && session.backend && (
+                <div hidden={tab !== "Conversation"}>
+                  <LiveConversation
+                    session={session.backend}
+                    onRefresh={refresh}
+                  />
+                </div>
+              )}
               {tab === "Conversation" ? (
-                <>
-                  <div className="transcript-meta">
-                    <Mic size={15} />
-                    <span>Sample transcript</span>
-                    <span className="transcript-time">
-                      {String(Math.floor(elapsed / 60)).padStart(2, "0")}:
-                      {String(elapsed % 60).padStart(2, "0")}
-                    </span>
-                  </div>
-                  <div className="transcript-list">
-                    {visible.map((m, i) => (
-                      <div className="transcript-item" key={i}>
-                        <span
-                          className={`avatar ${i % 2 ? "client-avatar" : "agent-avatar"}`}
-                        >
-                          {i % 2 ? session.initials : "AW"}
-                        </span>
-                        <div>
-                          <div className="transcript-speaker">
-                            <strong>{m.who}</strong>
-                            <span>{i % 2 ? "Client" : "You"}</span>
-                            <time>00:{String(i * 10).padStart(2, "0")}</time>
-                          </div>
-                          <p>{m.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {session.phase === "conversation" && (
-                    <div className="transcript-controls">
-                      <button
-                        className="v-button secondary"
-                        onClick={() => {
-                          if (!playing) update({ conversationSummary: "You asked about stopping payments and possible cancellation costs. Andi is explaining the conditions before you decide." });
-                          setPlaying(!playing);
-                        }}
-                      >
-                        {playing ? <Pause size={15} /> : <Play size={15} />}
-                        {playing ? "Pause demo" : "Play sample conversation"}
-                      </button>
-                      <span>No microphone is being recorded</span>
+                live ? null : (
+                  <>
+                    <div className="transcript-meta">
+                      <Mic size={15} />
+                      <span>Sample transcript</span>
+                      <span className="transcript-time">
+                        {String(Math.floor(elapsed / 60)).padStart(2, "0")}:
+                        {String(elapsed % 60).padStart(2, "0")}
+                      </span>
                     </div>
-                  )}
-                </>
+                    <div className="transcript-list">
+                      {visible.map((m, i) => (
+                        <div className="transcript-item" key={i}>
+                          <span
+                            className={`avatar ${i % 2 ? "client-avatar" : "agent-avatar"}`}
+                          >
+                            {i % 2 ? session.initials : "AW"}
+                          </span>
+                          <div>
+                            <div className="transcript-speaker">
+                              <strong>{m.who}</strong>
+                              <span>{i % 2 ? "Client" : "You"}</span>
+                              <time>00:{String(i * 10).padStart(2, "0")}</time>
+                            </div>
+                            <p>{m.text}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {session.phase === "conversation" && (
+                      <div className="transcript-controls">
+                        <button
+                          className="v-button secondary"
+                          onClick={() => {
+                            if (!playing)
+                              update({
+                                conversationSummary:
+                                  "You asked about stopping payments and possible cancellation costs. Andi is explaining the conditions before you decide.",
+                              });
+                            setPlaying(!playing);
+                          }}
+                        >
+                          {playing ? <Pause size={15} /> : <Play size={15} />}
+                          {playing ? "Pause demo" : "Play sample conversation"}
+                        </button>
+                        <span>No microphone is being recorded</span>
+                      </div>
+                    )}
+                  </>
+                )
               ) : (
                 <div className="session-policy">
                   <span className="eyebrow">ILLUSTRATIVE POLICY</span>
@@ -300,7 +387,18 @@ export function SessionWorkspace({ id }: { id: string }) {
                       <li key={s}>
                         <Check size={17} />
                         {s}
-                        {session.phase === "conversation" && <button className="text-button" onClick={() => update({ presentedTopic: index + 1 })}>{session.presentedTopic === index + 1 ? "Shown to client" : "Show to client"}</button>}
+                        {session.phase === "conversation" && (
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              update({ presentedTopic: index + 1 })
+                            }
+                          >
+                            {session.presentedTopic === index + 1
+                              ? "Shown to client"
+                              : "Show to client"}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -314,30 +412,56 @@ export function SessionWorkspace({ id }: { id: string }) {
                   <h2>Session guidance</h2>
                 </div>
                 <p className="copilot-caption">
-                  Private to you · Sample guidance
+                  {live
+                    ? `Private to you · ${analysis?.auditEngine || "Waiting for analysis"}`
+                    : "Private to you · Sample guidance"}
                 </p>
-                <div className="copilot-advice">
-                  <span className="eyebrow">
-                    {elapsed >= 60
-                      ? "DEMO FEEDBACK UPDATED"
-                      : "A HELPFUL NEXT STEP"}
-                  </span>
-                  <h3>
-                    {elapsed >= 60
-                      ? "Check client understanding"
-                      : "Explain cancellation costs"}
-                  </h3>
-                  <p>
-                    {elapsed >= 60
-                      ? "Ask your client to explain the key terms in their own words. Leave time for clarification before the summary."
-                      : "Your client asked about stopping payments. Explain any early cancellation charges with a simple, practical example."}
-                  </p>
-                </div>
+                {live ? (
+                  <div className="copilot-advice">
+                    <h3>
+                      {analysis
+                        ? `${analysis.warningFlags} · Session guidance`
+                        : "Ready to listen"}
+                    </h3>
+                    <p>
+                      {analysis?.suggestedAnswers?.[0]?.suggestedResponse ||
+                        analysis?.detectedIssues?.[0]?.explanation ||
+                        "Start recording or enter a transcript. Contextual feedback appears after analysis."}
+                    </p>
+                    {analysis?.auditedQnAs?.map((q, i) => (
+                      <p key={i}>
+                        <strong>{q.clientQuestion}</strong>
+                        <br />
+                        {q.compliantScript}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="copilot-advice">
+                    <span className="eyebrow">
+                      {elapsed >= 60
+                        ? "DEMO FEEDBACK UPDATED"
+                        : "A HELPFUL NEXT STEP"}
+                    </span>
+                    <h3>
+                      {elapsed >= 60
+                        ? "Check client understanding"
+                        : "Explain cancellation costs"}
+                    </h3>
+                    <p>
+                      {elapsed >= 60
+                        ? "Ask your client to explain the key terms in their own words. Leave time for clarification before the summary."
+                        : "Your client asked about stopping payments. Explain any early cancellation charges with a simple, practical example."}
+                    </p>
+                  </div>
+                )}
                 <span className="feedback-timing">
                   <ClockIcon />
-                  {playing
-                    ? `Next sample feedback in ${60 - (elapsed % 60)}s`
-                    : "Feedback designed for 1-minute intervals"}
+                  {live
+                    ? "Context analysis every 60 seconds while recording"
+                    : playing
+                      ? `Next sample feedback in ${60 - (elapsed % 60)}s`
+                      : "Feedback designed for 1-minute intervals"}
                 </span>
               </section>
               <section className="client-status-card">
@@ -358,7 +482,9 @@ export function SessionWorkspace({ id }: { id: string }) {
                     <p>
                       {session.phase === "conversation"
                         ? "Camera checks resume during the final review."
-                        : "Identity and gesture checks are simulated in this demo."}
+                        : live
+                          ? "Client camera verification runs during final review."
+                          : "Identity and gesture checks are simulated in this demo."}
                     </p>
                   </div>
                 </div>
@@ -396,20 +522,24 @@ export function SessionWorkspace({ id }: { id: string }) {
                     <Status value={session.status} />
                     <p>
                       {session.status === "Fast-track"
-                        ? "This sample session is marked fast-track. Share the next steps with your client."
-                        : "This demo is awaiting manual review. A real decision requires backend verification."}
+                        ? "This session is marked fast-track. Share the next steps with your client."
+                        : "This session requires manual review. Check the audit notes before explaining next steps."}
                     </p>
+                    {live &&
+                      session.backend?.consentResult?.internalAuditNotes.map(
+                        (note, i) => <p key={i}>{note}</p>,
+                      )}
                     <button
                       className="v-button secondary full"
                       onClick={() =>
                         downloadText(
                           `${id}-summary.txt`,
-                          `VERA FRONTEND DEMO — NOT A COMPLIANCE RECORD\n${session.name}\n${session.policy}\n\n${policy.simplifiedSummary.join("\n")}\n\nSample agent outcome: ${session.status}`,
+                          `VERA SESSION SUMMARY\n${session.name}\n${session.policy}\n\n${policy.simplifiedSummary.join("\n")}\n\nAgent outcome: ${session.status}`,
                         )
                       }
                     >
                       <Download size={15} />
-                      Download demo summary
+                      Download session summary
                     </button>
                   </>
                 ) : (
@@ -422,9 +552,10 @@ export function SessionWorkspace({ id }: { id: string }) {
                     </p>
                     <button
                       className="v-button primary full"
-                      disabled={session.phase === "review"}
-                      onClick={() => {
-                        if (update({ phase: "review" })) setPlaying(false);
+                      disabled={busy || session.phase === "review"}
+                      onClick={async () => {
+                        if (await update({ phase: "review" }))
+                          setPlaying(false);
                       }}
                     >
                       {session.phase === "review"
@@ -440,8 +571,9 @@ export function SessionWorkspace({ id }: { id: string }) {
         )}
         <div className="session-bottom-note">
           <LockKeyhole size={14} />
-          Frontend preview. Audio, camera analysis, and approval decisions are
-          not connected.
+          {live
+            ? "Connected to the session backend. Camera verification uses MediaPipe and the configured face-verification service."
+            : "Frontend preview. No audio analysis or approval decisions are connected."}
         </div>
       </main>
       {invite && (

@@ -4,7 +4,7 @@ import { getPolicyById, getDefaultPolicy } from "@/lib/dummy-data";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
@@ -15,7 +15,12 @@ export async function GET(
       "http://localhost:3000";
 
     // Auto-recovers or initializes the session if missing so customer view never 404s
-    const session = SessionStore.getOrCreateSession(id, origin);
+    const session = SessionStore.getSession(id);
+    if (!session)
+      return NextResponse.json(
+        { success: false, error: "Session not found" },
+        { status: 404 },
+      );
     const policy = getPolicyById(session.policyId) || getDefaultPolicy();
 
     return NextResponse.json({
@@ -45,22 +50,61 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
     const body = await req.json();
 
+    if (!SessionStore.getSession(id))
+      return NextResponse.json(
+        { success: false, error: "Session not found" },
+        { status: 404 },
+      );
     let updatedSession;
+    if (
+      body.presentedTopic !== undefined ||
+      body.clientQuestion !== undefined ||
+      body.recordingConsent !== undefined ||
+      body.cameraConsent !== undefined
+    ) {
+      const changes: Partial<import("@/types").Session> = {};
+      if (Number.isInteger(body.presentedTopic) && body.presentedTopic >= 0)
+        changes.presentedTopic = body.presentedTopic;
+      if (typeof body.clientQuestion === "string")
+        changes.clientQuestion = body.clientQuestion.slice(0, 350);
+      if (typeof body.recordingConsent === "boolean")
+        changes.recordingConsent = body.recordingConsent;
+      if (typeof body.cameraConsent === "boolean")
+        changes.cameraConsent = body.cameraConsent;
+      if (body.clientQuestion === "")
+        changes.clientQuestions = SessionStore.getSession(
+          id,
+        )?.clientQuestions?.map((q) => ({
+          ...q,
+          status: "ANSWERED",
+          statusLabel: "Discussed with advisor",
+        }));
+      updatedSession = SessionStore.updateSession(id, changes);
+    }
     if (body.dialogueBuffer !== undefined) {
-      updatedSession = SessionStore.updateLiveDialogueBuffer(id, String(body.dialogueBuffer));
+      updatedSession = SessionStore.updateLiveDialogueBuffer(
+        id,
+        String(body.dialogueBuffer),
+      );
     }
 
     if (body.telemetry) {
       updatedSession = SessionStore.recordLivenessTelemetry(id, body.telemetry);
     }
 
-    if (body.policyId || body.agentId || body.customerName || body.customerPhone || body.status) {
+    if (
+      body.policyId ||
+      body.agentId ||
+      body.customerName ||
+      body.customerPhone ||
+      body.status
+    ) {
       const updates: any = {};
       if (body.policyId) updates.policyId = body.policyId;
       if (body.agentId) updates.agentId = body.agentId;
@@ -73,7 +117,9 @@ export async function PATCH(
     return NextResponse.json({ success: true, session: updatedSession });
   } catch (err: any) {
     console.error("Failed to update session:", err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: err.message },
+      { status: 500 },
+    );
   }
 }
-

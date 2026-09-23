@@ -17,7 +17,7 @@ import { Brand } from "./Brand";
 import { useDemoSession } from "./useDemoSession";
 
 export function AgentInvitation({ id }: { id: string }) {
-  const { session, ready, update, error } = useDemoSession(id);
+  const { session, ready, update, error, live } = useDemoSession(id);
   const [link, setLink] = useState("");
   const [qr, setQr] = useState("");
   const [qrError, setQrError] = useState(false);
@@ -63,7 +63,9 @@ export function AgentInvitation({ id }: { id: string }) {
           <Brand small />
         </Link>
         <span className="invite-role">Agent workspace</span>
-        <span className="invite-demo">Frontend preview</span>
+        <span className="invite-demo">
+          {live ? "Connected session" : "Frontend preview"}
+        </span>
         <span className="avatar agent-avatar">AW</span>
       </header>
       <main className="invite-main">
@@ -137,11 +139,23 @@ export function AgentInvitation({ id }: { id: string }) {
               <p>
                 “We’ll record our conversation to prepare your summary. There’s
                 a brief face check now and again at the end. Your camera is off
-                while we talk. Face images stay on your device and aren’t saved.
-                You can ask questions or stop at any time.”
+                while we talk. Face snapshots are sent to our server and Google
+                Gemini for identity comparison. You can ask questions or stop at
+                any time.”
               </p>
             </details>
-            {session.question && <div className="invite-client-question" role="status"><h3>Client question</h3><p>{session.question}</p><button className="text-button" onClick={() => update({question: undefined})}>Mark as discussed <Check size={15} /></button></div>}
+            {session.question && (
+              <div className="invite-client-question" role="status">
+                <h3>Client question</h3>
+                <p>{session.question}</p>
+                <button
+                  className="text-button"
+                  onClick={() => update({ question: undefined })}
+                >
+                  Mark as discussed <Check size={15} />
+                </button>
+              </div>
+            )}
           </section>
           <section className="invite-qr-panel" aria-labelledby="qr-title">
             <div className="qr-panel-title">
@@ -175,7 +189,7 @@ export function AgentInvitation({ id }: { id: string }) {
               <div>
                 <strong>
                   {joined
-                    ? "Client joined the demo session"
+                    ? "Client joined the session"
                     : "Waiting for your client"}
                 </strong>
                 <p>
@@ -231,39 +245,43 @@ export function AgentInvitation({ id }: { id: string }) {
             <strong>
               {joined
                 ? "Client welcome complete"
-                : "You can continue when your client is ready"}
+                : "Preview the conversation layout"}
             </strong>
             <p>
               {!disclosed
-                ? "Confirm the disclosure after explaining it to your client."
+                ? "You can present the UI now; live recording still requires client consent."
                 : joined
                   ? "Continue to the conversation workspace."
-                  : "The conversation will not start automatically."}
+                  : "Presentation mode does not record audio or verify identity."}
             </p>
           </div>
-          {joined && disclosed ? (
+          {joined && disclosed && live ? (
             <Link className="v-button primary" href={`/session/${id}`}>
               Continue to conversation <ArrowRight size={17} />
             </Link>
           ) : (
-            <button className="v-button primary" disabled>
-              {joined ? "Confirm disclosure to continue" : "Waiting for client"}
-            </button>
+            <Link className="v-button primary" href={`/session/${id}?presentation=1`}>
+              Preview conversation <ArrowRight size={17}/>
+            </Link>
           )}
         </div>
         <div className="invite-preview-note">
           <Monitor size={16} />
           <p>
-            <strong>Local preview.</strong> Use the client link on this
-            computer. Phone scanning requires a hosted URL; this demo syncs only
-            between tabs in the same browser. No recording or verification is
-            performed.
+            {live
+              ? "Session state is shared through the server. For a phone camera, open the app on a reachable HTTPS address; localhost links work only on this computer."
+              : "This is a local demo. Create a session to use the connected backend."}
+            {!live && (
+              <Link className="text-button" href="/sessions">
+                Create a connected session <ArrowUpRight size={15} />
+              </Link>
+            )}
           </p>
           {id === "preview" && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (
-                  update({
+                  await update({
                     phase: "welcome",
                     status: "Ready to start",
                     question: undefined,
@@ -283,4 +301,3 @@ export function AgentInvitation({ id }: { id: string }) {
     </div>
   );
 }
-

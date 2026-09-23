@@ -34,10 +34,12 @@ import {
 import { Brand } from "./Brand";
 import {
   DemoSession,
+  dashboardExamples,
   downloadText,
   getDemoSessions,
   sampleSessions,
   saveDemoSession,
+  sessionToView,
 } from "@/lib/frontend-demo";
 import { DUMMY_POLICIES } from "@/lib/dummy-data";
 
@@ -144,9 +146,9 @@ export function Status({ value }: { value: string }) {
 
 export function Workspace({ section }: { section: Section }) {
   const router = useRouter();
-  const [sessions, setSessions] = useState(sampleSessions);
+  const [sessions, setSessions] = useState<DemoSession[]>([]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("All sessions");
+  const [filter, setFilter] = useState("Ongoing");
   const [period, setPeriod] = useState("Last 7 days");
   const [modal, setModal] = useState<
     "new" | "notifications" | "settings" | "help" | null
@@ -154,28 +156,46 @@ export function Workspace({ section }: { section: Section }) {
   const [menu, setMenu] = useState(false);
   const [name, setName] = useState("");
   const [policy, setPolicy] = useState("RetireSafe Golden Shield");
+  const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState("");
   const [selectedPolicy, setSelectedPolicy] = useState<string | null>(null);
   const [notify, setNotify] = useState(true);
   useEffect(() => {
-    const update = () => setSessions(getDemoSessions());
-    update();
-    if (new URLSearchParams(window.location.search).get("status") === "review")
-      setFilter("Needs review");
-    window.addEventListener("storage", update);
-    window.addEventListener("vera-demo-update", update);
-    return () => {
-      window.removeEventListener("storage", update);
-      window.removeEventListener("vera-demo-update", update);
+    if (new URLSearchParams(window.location.search).get("view") === "completed")
+      setFilter("Completed");
+    const update = async () => {
+      try {
+        const response = await fetch("/api/session", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || !data.success)
+          throw new Error("Unable to load sessions");
+        setSessions(
+          data.sessions.map((s: import("@/types").Session) =>
+            sessionToView(
+              s,
+              DUMMY_POLICIES.find((p) => p.id === s.policyId),
+            ),
+          ),
+        );
+      } catch {
+        setFormError(
+          "Unable to load sessions. Check your connection and refresh.",
+        );
+      }
     };
+    void update();
+    const timer = setInterval(update, 5000);
+    return () => clearInterval(timer);
   }, []);
-  const filtered = sessions.filter(
+  const filtered = [...sessions, ...dashboardExamples].filter(
     (s) =>
       `${s.name} ${s.id} ${s.policy}`
         .toLowerCase()
         .includes(query.toLowerCase()) &&
-      (filter === "All sessions" || s.status === filter) &&
-      (period !== "Today" || s.date === "20 Sep 2026"),
+      (filter === "Completed" ? s.phase === "signed" : s.phase !== "signed") &&
+      (s.isExample ||
+        period !== "Today" ||
+        s.date === new Date().toLocaleDateString("en-GB")),
   );
   const reviewCount = sessions.filter(
     (s) => s.status === "Needs review",
@@ -183,44 +203,39 @@ export function Workspace({ section }: { section: Section }) {
   const active = sessions.find(
     (s) => s.phase === "conversation" || s.phase === "review",
   );
-  function createSession(e: React.FormEvent) {
+  async function createSession(e: React.FormEvent) {
     e.preventDefault();
+    if (creating) return;
     if (!name.trim()) {
       setFormError("Add a client name to continue.");
       return;
     }
-    const session: DemoSession = {
-      id: `VR-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      name: name.trim(),
-      initials: name
-        .trim()
-        .split(/\s+/)
-        .map((n) => n[0])
-        .slice(0, 2)
-        .join("")
-        .toUpperCase(),
-      policy,
-      date: "20 Sep 2026",
-      time: "Just now",
-      duration: "—",
-      status: "Ready to start",
-      phase: "welcome",
-    };
     try {
-      saveDemoSession(session);
-      router.push(`/agent/${session.id}/invite`);
-    } catch {
-      setFormError(
-        "Browser storage is unavailable. Enable local storage to create a demo session.",
-      );
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientExperience: "workspace",
+          customerName: name.trim(),
+          agentId: "agt_andi_01",
+          policyId: DUMMY_POLICIES.find((p) => p.name.startsWith(policy))?.id,
+          baseUrl: window.location.origin,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success)
+        throw new Error(data.error || "Could not create session");
+      router.push(`/agent/${data.session.id}/invite`);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Could not create session");
     }
   }
   function exportSessions() {
     const quote = (v: string) => `"${v.replaceAll('"', '""')}"`;
     downloadText(
-      "vera-demo-sessions.csv",
+      "vera-sessions.csv",
       [
-        "Demo data — not compliance records",
+        "Vera session list",
         "Session,Client,Policy,Date,Status",
         ...filtered.map((s) =>
           [s.id, s.name, s.policy, s.date, s.status].map(quote).join(","),
@@ -315,7 +330,7 @@ export function Workspace({ section }: { section: Section }) {
           <div className="topbar-actions">
             <span className="demo-label">
               <span />
-              Demo workspace
+              Connected workspace
             </span>
             <button
               className="notification-button icon-button"
@@ -331,7 +346,14 @@ export function Workspace({ section }: { section: Section }) {
         <main className="v-content">
           <div className="page-heading">
             <div>
-              <div className="workspace-date">Sunday, 20 September 2026</div>
+              <div className="workspace-date">
+                {new Date().toLocaleDateString("en-GB", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </div>
               <h1>
                 {section === "overview"
                   ? "Session overview"
@@ -366,7 +388,7 @@ export function Workspace({ section }: { section: Section }) {
                   icon={<MessageCircle size={19} />}
                   label="Total sessions"
                   value={String(sessions.length)}
-                  note="Demo workspace"
+                  note="Connected workspace"
                   detail="This week"
                 />
                 <Stat
@@ -440,6 +462,10 @@ export function Workspace({ section }: { section: Section }) {
                   Export
                 </button>
               </div>
+              <p className="history-sample-note">
+                Each tab includes one labeled sample so you can preview the
+                experience.
+              </p>
               <div className="table-card">
                 <div className="table-toolbar">
                   <div
@@ -447,12 +473,7 @@ export function Workspace({ section }: { section: Section }) {
                     role="group"
                     aria-label="Filter sessions"
                   >
-                    {[
-                      "All sessions",
-                      "In progress",
-                      "Needs review",
-                      "Completed",
-                    ].map((tab) => (
+                    {["Ongoing", "Completed"].map((tab) => (
                       <button
                         key={tab}
                         className={filter === tab ? "selected" : ""}
@@ -496,25 +517,11 @@ export function Workspace({ section }: { section: Section }) {
                       </button>
                     )}
                   </label>
-                  <label className="filter-select">
-                    <SlidersHorizontal size={15} />
-                    <select
-                      aria-label="Session status"
-                      value={filter}
-                      onChange={(e) => setFilter(e.target.value)}
-                    >
-                      {[
-                        "All sessions",
-                        "Ready to start",
-                        "In progress",
-                        "Fast-track",
-                        "Needs review",
-                        "Completed",
-                      ].map((s) => (
-                        <option key={s}>{s}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <span className="history-table-hint">
+                    {filter === "Completed"
+                      ? "Read-only session history"
+                      : "Continue an active session"}
+                  </span>
                 </div>
                 <div className="table-scroll">
                   <table className="session-table">
@@ -535,7 +542,11 @@ export function Workspace({ section }: { section: Section }) {
                         <tr key={s.id}>
                           <td>
                             <Link
-                              href={`/session/${s.id}`}
+                              href={
+                                s.phase === "welcome"
+                                  ? `/agent/${s.id}/invite`
+                                  : `/session/${s.id}`
+                              }
                               className="client-cell"
                             >
                               <span
@@ -545,7 +556,11 @@ export function Workspace({ section }: { section: Section }) {
                               </span>
                               <div>
                                 <strong>{s.name}</strong>
-                                <span>{s.id}</span>
+                                <span>
+                                  {s.isExample
+                                    ? "SAMPLE · Illustrative data"
+                                    : s.id}
+                                </span>
                               </div>
                             </Link>
                           </td>
@@ -562,11 +577,18 @@ export function Workspace({ section }: { section: Section }) {
                           </td>
                           <td>
                             <Link
-                              href={`/session/${s.id}`}
+                              href={
+                                s.phase === "welcome"
+                                  ? `/agent/${s.id}/invite`
+                                  : `/session/${s.id}`
+                              }
                               className="row-arrow"
                               aria-label={`Open ${s.name} session`}
                             >
-                              <ArrowUpRight size={18} />
+                              {s.phase === "signed"
+                                ? "View history"
+                                : "Continue"}
+                              <ArrowUpRight size={16} />
                             </Link>
                           </td>
                         </tr>
@@ -582,7 +604,7 @@ export function Workspace({ section }: { section: Section }) {
                         className="v-button secondary"
                         onClick={() => {
                           setQuery("");
-                          setFilter("All sessions");
+                          setFilter("Ongoing");
                           setPeriod("All time");
                         }}
                       >
@@ -734,7 +756,7 @@ export function Workspace({ section }: { section: Section }) {
             <span>Vera · Agent workspace</span>
             <span>
               <LockKeyhole size={12} />
-              Demo environment
+              Connected to session backend
             </span>
           </footer>
         </main>
@@ -771,7 +793,7 @@ export function Workspace({ section }: { section: Section }) {
               <ShieldCheck size={20} />
               <p>
                 You’ll invite your client and explain recording before the
-                conversation begins. Use a sample name in this demo.
+                conversation begins.
               </p>
             </div>
             {formError && (
@@ -780,7 +802,8 @@ export function Workspace({ section }: { section: Section }) {
               </p>
             )}
             <button className="v-button primary full" type="submit">
-              Create demo session <ArrowRight size={17} />
+              {creating ? "Creating…" : "Create session"}{" "}
+              <ArrowRight size={17} />
             </button>
           </form>
         </Modal>
@@ -934,4 +957,3 @@ function Stat({
     </article>
   );
 }
-
