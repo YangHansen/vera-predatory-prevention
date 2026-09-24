@@ -5,6 +5,7 @@ import { AlertCircle, Sparkles, Cpu, Globe, Radio, Zap, Activity } from "lucide-
 import type { SttEngineMode } from "@/types";
 
 interface SpeechListenerProps {
+  minimal?: boolean;
   onTranscript: (text: string) => void;
   isListening: boolean;
   onToggleListening: (listening: boolean) => void;
@@ -98,12 +99,13 @@ function encodeWavBase64(samples: Float32Array, sampleRate = 16000): string {
 }
 
 export function SpeechListener({
+  minimal = false,
   onTranscript,
   isListening,
   onToggleListening,
   interimTranscript,
   setInterimTranscript,
-  engineMode = "browser",
+  engineMode = "cloud",
   onEngineModeChange,
 }: SpeechListenerProps) {
   const [selectedEngine, setSelectedEngine] = useState<SttEngineMode>(engineMode);
@@ -594,9 +596,15 @@ export function SpeechListener({
           const data = await res.json();
           if (data.success && data.transcript && data.transcript.trim().length > 0) {
             onTranscriptRef.current(data.transcript.trim());
+          } else if (!res.ok || !data.success) {
+            console.warn("Gemini Cloud STT failed, initiating automatic Browser Web Speech fallback:", data?.error);
+            setErrorMsg("Gemini STT unavailable. Switched to Browser Speech.");
+            startBrowserSpeech(stream);
           }
         } catch (err) {
-          console.warn("Cloud transcription slice error:", err);
+          console.warn("Cloud transcription error, falling back to Browser Web Speech:", err);
+          setErrorMsg("Gemini STT connection error. Switched to Browser Speech.");
+          startBrowserSpeech(stream);
         } finally {
           isSending = false;
           if (isListeningRef.current) {
@@ -697,6 +705,7 @@ export function SpeechListener({
     };
   }, [isListening, selectedEngine, startGeminiLiveSTT, startBrowserSpeech, startGoogleCloudSTT, cleanupAll]);
 
+  if (minimal) return errorMsg ? <p role="alert" className="form-error">{errorMsg}</p> : null;
   return (
     <div className="space-y-3">
       {/* Engine Switcher Bar */}

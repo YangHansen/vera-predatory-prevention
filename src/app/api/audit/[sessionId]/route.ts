@@ -7,14 +7,14 @@ import { getMasStatusLabel, type ComplianceCertificate } from "@/types";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ sessionId: string }> }
 ) {
-  const { id } = await params;
-  const session = SessionStore.getSession(id);
+  const { sessionId } = await params;
+  const session = SessionStore.getSession(sessionId);
 
   if (!session) {
     return NextResponse.json(
-      { success: false, error: "Session record not found" },
+      { success: false, error: "Audit record for session not found" },
       { status: 404 }
     );
   }
@@ -82,6 +82,13 @@ export async function GET(
 
   return NextResponse.json({
     success: true,
-    certificate,
+    sessionId: session.id,
+    auditReport: {
+      certificate,
+      copilotEvents: session.copilotEvents,
+      confusionEvents: session.confusionEvents || [],
+      consentResult: session.consentResult,
+      status: session.status,
+    },
   });
 }
