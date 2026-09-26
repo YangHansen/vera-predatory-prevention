@@ -61,7 +61,7 @@ export class SessionStore {
 
     const session: Session = {
       id,
-      agentId: params.agentId || "agent_andi_sg01",
+      agentId: params.agentId || "agt_andi_01",
       customerName: params.customerName || "Mdm. Tan",
       customerPhone: params.customerPhone || "+65 9123 4567",
       policyId: params.policyId || policy.id,
@@ -101,7 +101,7 @@ export class SessionStore {
       const host = baseUrl || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
       session = {
         id,
-        agentId: "agent_andi_sg01",
+        agentId: "agt_andi_01",
         customerName: "Mdm. Tan",
         customerPhone: "+65 9123 4567",
         policyId: policy.id,
@@ -272,14 +272,22 @@ export class SessionStore {
     return session;
   }
 
-  static listSessions(): Session[] {
+  static listSessions(agentId?: string): Session[] {
     // Merge memory and disk
     const diskMap = loadFromDisk();
     for (const [k, v] of diskMap.entries()) {
       if (!sessions.has(k)) sessions.set(k, v);
     }
-    return Array.from(sessions.values()).sort(
+    const list = Array.from(sessions.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
+    if (agentId) {
+      const normalizedQuery = agentId === "agent_andi_sg01" ? "agt_andi_01" : agentId;
+      return list.filter((s) => {
+        const sAgent = s.agentId === "agent_andi_sg01" ? "agt_andi_01" : s.agentId;
+        return sAgent === normalizedQuery;
+      });
+    }
+    return list;
   }
 }

@@ -273,6 +273,9 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
         if (data.success && data.session && data.policy) {
           setSession(data.session);
           setPolicy(data.policy);
+          if (data.advisor) {
+            setAdvisor(data.advisor);
+          }
 
           if (data.session.consentResult) {
             setSubmissionResult(data.session.consentResult);
@@ -463,8 +466,10 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
     }
   };
 
-  const activeAdvisorName = advisor ? advisor.fullName : "Andi Wijaya";
-  const activeAdvisorRep = advisor ? advisor.repNumber : "MAS-REP-882910";
+  const fallbackAdvisorName = typeof window !== "undefined" ? localStorage.getItem("vera_active_agent_name") : null;
+  const fallbackAdvisorRep = typeof window !== "undefined" ? localStorage.getItem("vera_active_agent_rep") : null;
+  const activeAdvisorName = advisor ? advisor.fullName : (fallbackAdvisorName || "Andi Wijaya");
+  const activeAdvisorRep = advisor ? advisor.repNumber : (fallbackAdvisorRep || "MAS-REP-882910");
 
   if (loading) {
     return (

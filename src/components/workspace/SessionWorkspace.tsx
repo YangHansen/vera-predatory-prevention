@@ -90,59 +90,44 @@ export function SessionWorkspace({ id }: { id: string }) {
     presentation || (live || session.isExample) &&
     (session.phase === "conversation" || session.phase === "review")
   ) {
-    const sampleBackend: import("@/types").Session = {
+    const cleanBackend: import("@/types").Session = session.backend || {
       id: session.id,
-      agentId: "sample",
+      agentId:
+        session.advisor?.id ||
+        (typeof window !== "undefined"
+          ? localStorage.getItem("vera_active_agent_id")
+          : null) ||
+        "agt_andi_01",
       customerName: session.name,
       policyId: policy.id,
       status: (presentation ? presentationPhase : session.phase) === "review" ? "CUSTOMER_REVIEWING" : "HANDED_OFF",
       recordingConsent: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      conversationSummary: session.conversationSummary?.split("\n") || ["You introduced the insurance policy.","Your client asked about the cost and how to cancel.","You reviewed where to find costs in the policy."],
-      clientQuestions: [
-        {
-          id: "sample-q1",
-          question: "What will I pay?",
-          status: "ANSWERED",
-          statusLabel: "Reviewed",
-          timestamp: "",
-        },
-        {
-          id: "sample-q2",
-          question: "How do I cancel?",
-          status: "PENDING",
-          statusLabel: "Needs explanation",
-          timestamp: "",
-        },
-      ],
-      copilotEvents: [
-        {
-          isCompliant: true,
-          warningFlags: "GREEN",
-          confidenceScore: 0.8,
-          detectedIssues: [],
-          suggestedAnswers: [
-            {
-              questionOrObjection: "How do I cancel?",
-              cheatSheetBullet:
-                "Ibu Siti asked how to cancel. Walk through the cancellation terms in plain language.",
-              suggestedResponse:
-                "Let’s review how cancellation works and any conditions that apply.",
-            },
-          ],
-          timestamp: new Date().toISOString(),
-        },
-      ],
+      conversationSummary: session.conversationSummary ? session.conversationSummary.split("\n") : [],
+      clientQuestions: [],
+      copilotEvents: [],
     };
     return (
       <LiveConversation
         key={id}
-        session={presentation ? sampleBackend : session.backend || sampleBackend}
-        demo={presentation || !live}
+        session={cleanBackend}
+        demo={false}
         onRefresh={refresh}
-        onReset={async () => {if(presentation){setPresentationPhase("conversation");return true;}return update({phase:"conversation"});}}
-        onEnd={async () => {if(presentation){setPresentationPhase("review");return true;}return update({phase:"review"});}}
+        onReset={async () => {
+          if (presentation) {
+            setPresentationPhase("conversation");
+            return true;
+          }
+          return update({ phase: "conversation" });
+        }}
+        onEnd={async () => {
+          if (presentation) {
+            setPresentationPhase("review");
+            return true;
+          }
+          return update({ phase: "review" });
+        }}
       />
     );
   }

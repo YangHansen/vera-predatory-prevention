@@ -47,6 +47,20 @@ const SEED_AGENTS: AgentAccount[] = [
     createdAt: "2026-03-10T10:15:00.000Z",
     updatedAt: "2026-09-14T14:45:00.000Z",
   },
+  {
+    id: "agt_rachel_04",
+    repNumber: "MAS-REP-441103",
+    fullName: "Rachel Koh, CFP",
+    email: "rachel.koh@verainsure.sg",
+    phone: "+65 9123 4567",
+    agencyFirm: "Vera Premier Advisory",
+    role: "SENIOR_ADVISOR",
+    status: "ACTIVE",
+    complianceRating: 99.0,
+    totalSessions: 18,
+    createdAt: "2026-04-01T09:00:00.000Z",
+    updatedAt: "2026-09-20T10:00:00.000Z",
+  },
 ];
 
 function loadFromDisk(): Map<string, AgentAccount> {
@@ -56,8 +70,16 @@ function loadFromDisk(): Map<string, AgentAccount> {
       const raw = fs.readFileSync(AGENTS_CACHE_FILE, "utf-8");
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
+        let rachelSeen = false;
         for (const a of list) {
-          if (a && a.id) map.set(a.id, a);
+          if (a && a.id) {
+            // Deduplicate test-generated Rachel Koh accounts
+            if (a.fullName?.toLowerCase().includes("rachel koh")) {
+              if (rachelSeen) continue;
+              rachelSeen = true;
+            }
+            map.set(a.id, a);
+          }
         }
       }
     }
@@ -161,11 +183,12 @@ export class AgentStore {
   }
 
   static getAgent(id: string): AgentAccount | undefined {
-    let agent = agents.get(id);
+    const normalizedId = id === "agent_andi_sg01" ? "agt_andi_01" : id;
+    let agent = agents.get(normalizedId);
     if (!agent) {
       const diskMap = loadFromDisk();
-      agent = diskMap.get(id);
-      if (agent) agents.set(id, agent);
+      agent = diskMap.get(normalizedId);
+      if (agent) agents.set(normalizedId, agent);
     }
     return agent;
   }
@@ -216,5 +239,13 @@ export class AgentStore {
 
   static getDefaultAgent(): AgentAccount {
     return SEED_AGENTS[0];
+  }
+
+  static deleteAgent(id: string): boolean {
+    const deleted = agents.delete(id);
+    if (deleted) {
+      saveToDisk(agents);
+    }
+    return deleted;
   }
 }

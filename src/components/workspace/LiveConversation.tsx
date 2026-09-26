@@ -121,8 +121,12 @@ export function LiveConversation({
       setListening(false);
     }
   }, [session.status, listening, analyze]);
+
   const canRecord =
-    session.status === "HANDED_OFF" && session.recordingConsent === true;
+    session.status !== "CUSTOMER_REVIEWING" &&
+    session.status !== "LIVENESS_CHECK" &&
+    session.status !== "CONSENT_SIGNED" &&
+    session.status !== "SUBMITTED";
   const policy =
     DUMMY_POLICIES.find((p) => p.id === session.policyId) || DUMMY_POLICIES[0];
   const analysis = session.copilotEvents.at(-1);
@@ -133,14 +137,12 @@ export function LiveConversation({
   const reviewing =
     session.status === "CUSTOMER_REVIEWING" ||
     session.status === "LIVENESS_CHECK";
-  const stamp = demo
-    ? "12:00"
-    : analysis
-      ? new Date(analysis.timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "Not yet";
+  const stamp = analysis
+    ? new Date(analysis.timestamp).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Listening…";
   const clock = (value: number) =>
     `${Math.floor(value / 60)
       .toString()
@@ -169,9 +171,10 @@ export function LiveConversation({
             <h1>{reviewing ? "Client final review" : "Live conversation"}</h1>
             <p>
               {session.customerName} <span>·</span>{" "}
-              {demo ? "Sample insurance policy" : policy.name.split(" (")[0]}{" "}
-              <span>·</span> {reviewing ? "Client is reviewing independently on mobile" : `${clock(elapsed)} elapsed`}
-              {demo && <span className="room-example">Sample layout</span>}
+              {policy.name.split(" (")[0]} <span>·</span>{" "}
+              {reviewing
+                ? "Client is reviewing independently on mobile"
+                : `${clock(elapsed)} elapsed`}
             </p>
           </div>
           <div className="room-actions">

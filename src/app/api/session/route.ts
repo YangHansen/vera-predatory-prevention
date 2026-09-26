@@ -64,8 +64,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
-  const sessions = SessionStore.listSessions();
+export async function GET(req: NextRequest) {
+  let agentId: string | undefined;
+  if (req && req.url) {
+    try {
+      const url = new URL(req.url);
+      agentId = url.searchParams.get("agentId") || undefined;
+    } catch {
+      // ignore
+    }
+  }
+  const sessions = SessionStore.listSessions(agentId);
   return NextResponse.json({
     success: true,
     count: sessions.length,
