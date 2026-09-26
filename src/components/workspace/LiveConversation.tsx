@@ -250,14 +250,19 @@ export function LiveConversation({
               <strong
                 style={{
                   color:
-                    analysis.warningFlags === "GREEN"
+                    analysis.rectification?.isRectified
+                      ? "#2563eb"
+                      : analysis.warningFlags === "GREEN"
                       ? "#15803d"
                       : analysis.warningFlags === "YELLOW"
                       ? "#b45309"
                       : "#b91c1c",
                 }}
               >
-                ● {getMasStatusLabel(analysis.warningFlags)}
+                ●{" "}
+                {analysis.rectification?.isRectified
+                  ? "Correction Logged · Rectified"
+                  : getMasStatusLabel(analysis.warningFlags)}
               </strong>
             </span>
           )}
@@ -358,23 +363,29 @@ export function LiveConversation({
             </header>
             <div className="room-card-body">
               <div
-                className={`room-advice ${attention || session.clientQuestion ? "attention" : ""}`}
+                className={`room-advice ${analysis?.rectification?.isRectified ? "rectified" : attention || session.clientQuestion ? "attention" : ""}`}
               >
                 <span>
                   <Info size={14} />
-                  {attention || session.clientQuestion
+                  {analysis?.rectification?.isRectified
+                    ? "PROACTIVE RECTIFICATION LOGGED"
+                    : attention || session.clientQuestion
                     ? "A QUESTION NEEDS ATTENTION"
                     : "NEXT STEP"}
                 </span>
                 <h3>
-                  {attention || session.clientQuestion
+                  {analysis?.rectification?.isRectified
+                    ? "Policy correction acknowledged"
+                    : attention || session.clientQuestion
                     ? "Explain the concern before continuing"
                     : "Give your client time to understand"}
                 </h3>
                 <p>
-                  {advice?.cheatSheetBullet ||
-                    analysis?.detectedIssues[0]?.explanation ||
-                    "Walk through the policy in plain language. Guidance will update after each audio review."}
+                  {analysis?.rectification?.isRectified
+                    ? "Your clarification has been verified and recorded. The misstatement has been cured and queued for standard secondary audit."
+                    : advice?.cheatSheetBullet ||
+                      analysis?.detectedIssues[0]?.explanation ||
+                      "Walk through the policy in plain language. Guidance will update after each audio review."}
                 </p>
               </div>
               <div className="room-wording">

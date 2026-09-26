@@ -1029,10 +1029,13 @@ export default function CopilotTestPage() {
                     </div>
                     <div>
                       <div className="text-xs font-black uppercase tracking-wider">
-                        Compliance Status: {result.warningFlags}
+                        Compliance Status:{" "}
+                        {result.rectification?.isRectified ? "RECTIFIED (CURED)" : result.warningFlags}
                       </div>
                       <div className="text-[11px] opacity-80 mt-0.5">
-                        {result.isCompliant
+                        {result.rectification?.isRectified
+                          ? "Proactive self-correction logged · Previous misstatement cured for Secondary Audit."
+                          : result.isCompliant
                           ? "Advisory statements satisfy MAS Fair Dealing standard."
                           : "Potential mis-selling or aggressive pitch patterns flagged."}
                       </div>

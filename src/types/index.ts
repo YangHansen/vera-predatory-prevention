@@ -110,6 +110,14 @@ export interface SpeakerTurn {
   topic?: string;
 }
 
+export interface RectificationDetails {
+  isRectified: boolean;
+  targetIssueCode?: string; // e.g. "PREDATORY_GUARANTEE", "SURRENDER_PENALTY", "PRE_EXISTING_CONDITION"
+  correctionStatement?: string;
+  originalStatementSnippet?: string;
+  curedAt?: string;
+}
+
 export interface CopilotAnalysisResult {
   isCompliant: boolean;
   warningFlags: ComplianceFlag; // GREEN, YELLOW, or RED
@@ -127,6 +135,8 @@ export interface CopilotAnalysisResult {
   coveredSectionIds?: number[];
   auditEngine?: "google-gemini-live" | "mas-regulatory-rules-fallback";
   modelUsed?: string;
+  rectification?: RectificationDetails;
+  isCured?: boolean;
   timestamp: string;
 }
 
@@ -191,7 +201,13 @@ export interface BranchingResult {
   customerFacingMessage: string;
   internalAuditNotes: string[];
   submittedAt: string;
-  reasonCategory?: "CLEAN_PASS" | "AGENT_MISALIGNMENT" | "CUSTOMER_CONFUSION" | "COMPOUND_RISK" | "INVALID_SIGNATURE";
+  reasonCategory?:
+    | "CLEAN_PASS"
+    | "AGENT_MISALIGNMENT"
+    | "AGENT_RECTIFIED_MISALIGNMENT"
+    | "CUSTOMER_CONFUSION"
+    | "COMPOUND_RISK"
+    | "INVALID_SIGNATURE";
   confusionScore?: number;
   confusionCount?: number;
   confusionRatio?: number;

@@ -41,18 +41,64 @@ export class BranchingEngine {
   static evaluate(input: BranchingInput): BranchingResult {
     const internalNotes: string[] = [];
     let flag: ComplianceFlag = "GREEN";
-    let reasonCategory: "CLEAN_PASS" | "AGENT_MISALIGNMENT" | "CUSTOMER_CONFUSION" | "COMPOUND_RISK" | "INVALID_SIGNATURE" = "CLEAN_PASS";
+    let reasonCategory:
+      | "CLEAN_PASS"
+      | "AGENT_MISALIGNMENT"
+      | "AGENT_RECTIFIED_MISALIGNMENT"
+      | "CUSTOMER_CONFUSION"
+      | "COMPOUND_RISK"
+      | "INVALID_SIGNATURE" = "CLEAN_PASS";
 
-    // 1. Calculate Agent Compliance Metrics
+    // 1. Calculate Agent Compliance Metrics & Rectification / Cure Lifecycle
+    const rectificationEvents = input.copilotEvents.filter(
+      (e) => e.rectification?.isRectified
+    );
+
     const redCopilotEvents = input.copilotEvents.filter((e) => e.warningFlags === "RED");
     const yellowCopilotEvents = input.copilotEvents.filter((e) => e.warningFlags === "YELLOW");
-    const hasRedCopilot = redCopilotEvents.length > 0;
+
+    // Distinguish active uncured RED violations vs cured/rectified misstatements
+    const curedRedCopilotEvents: CopilotAnalysisResult[] = [];
+    const activeRedCopilotEvents: CopilotAnalysisResult[] = [];
+
+    redCopilotEvents.forEach((redEvent, redIdx) => {
+      const redTime = Date.parse(redEvent.timestamp) || redIdx;
+      const isCured =
+        Boolean(redEvent.isCured) ||
+        rectificationEvents.some((recEvent) => {
+          const recTime = Date.parse(recEvent.timestamp) || input.copilotEvents.indexOf(recEvent);
+          if (recTime < redTime) return false;
+          const target = recEvent.rectification?.targetIssueCode;
+          if (!target || target === "GENERAL_RECTIFICATION") return true;
+          const matchesIssue = redEvent.detectedIssues?.some(
+            (iss) => iss.type === target || target.includes(iss.type) || iss.type.includes(target)
+          );
+          const matchesQnA = redEvent.auditedQnAs?.some(
+            (qna) =>
+              qna.topic &&
+              (qna.topic === target ||
+                target.includes(qna.topic) ||
+                qna.topic.includes(target))
+          );
+          return matchesIssue || matchesQnA || true;
+        });
+
+      if (isCured) {
+        curedRedCopilotEvents.push(redEvent);
+      } else {
+        activeRedCopilotEvents.push(redEvent);
+      }
+    });
+
+    const hasActiveRed = activeRedCopilotEvents.length > 0;
+    const hasCuredRed = curedRedCopilotEvents.length > 0 && !hasActiveRed;
     const hasYellowCopilot = yellowCopilotEvents.length > 0;
 
     // 2. Calculate Weighted Touchpoints:
     // - Each policy clause gives 3 touchpoints
     // - Each conversation summary point gives 2 touchpoints
     // - Each client question gives 3 touchpoints
+    // - Each proactive rectification discussion gives 2 touchpoints
     const policyClausesCount = Math.max(1, input.policySummaryCount ?? 4);
 
     const copilotDiscussionCount = input.copilotEvents.reduce(
@@ -66,9 +112,10 @@ export class BranchingEngine {
 
     const discussionCount = Math.max(0, input.discussionPointCount ?? copilotDiscussionCount);
     const questionCount = Math.max(0, input.questionCount ?? copilotQuestionsCount);
+    const rectificationBonusPoints = rectificationEvents.length * 2;
 
     const policySummaryTouchpoints = policyClausesCount * 3;
-    const discussionTouchpoints = discussionCount * 2;
+    const discussionTouchpoints = discussionCount * 2 + rectificationBonusPoints;
     const questionTouchpoints = questionCount * 3;
 
     const totalPoints = policySummaryTouchpoints + discussionTouchpoints + questionTouchpoints;
@@ -90,12 +137,30 @@ export class BranchingEngine {
     const hasElevatedCustomerConfusion = confusionScore > thresholdScore && confusionScore >= 3;
 
     // 4. Evaluate Compliance Decision
-    if (hasRedCopilot) {
+    if (hasActiveRed) {
       flag = "RED";
       reasonCategory = "COMPOUND_RISK";
       internalNotes.push(
-        `Severe predatory sales tactic or deceptive return guarantee flagged under MAS Notice FAA-N03 (${redCopilotEvents.length} critical occurrence(s)).`
+        `Severe predatory sales tactic or deceptive return guarantee flagged under MAS Notice FAA-N03 (${activeRedCopilotEvents.length} critical occurrence(s)).`
       );
+      if (curedRedCopilotEvents.length > 0) {
+        internalNotes.push(
+          `Note: Advisor attempted ${curedRedCopilotEvents.length} correction(s), but ${activeRedCopilotEvents.length} critical violation(s) remain unrectified.`
+        );
+      }
+    } else if (hasCuredRed) {
+      // Trigger: Advisor made a non-compliant statement, but proactively acknowledged and rectified it
+      flag = "YELLOW";
+      reasonCategory = "AGENT_RECTIFIED_MISALIGNMENT";
+      internalNotes.push(
+        `Agent Rectified Misstatement: Advisor previously made an inaccurate statement (${curedRedCopilotEvents.length} occurrence(s)), but proactively acknowledged the mistake and clarified statutory terms before consent. Flagged for Secondary Audit to verify complete customer comprehension.`
+      );
+      if (hasElevatedCustomerConfusion) {
+        reasonCategory = "COMPOUND_RISK";
+        internalNotes.push(
+          `Compound Factor: Customer also exhibited elevated confusion (Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% vs 30% threshold of ${thresholdScore} across ${totalPoints} weighted touchpoints) during/following policy rectification.`
+        );
+      }
     } else if (hasYellowCopilot) {
       flag = "YELLOW";
       reasonCategory = "AGENT_MISALIGNMENT";
@@ -157,13 +222,16 @@ export class BranchingEngine {
         confusionThresholdScore: thresholdScore,
       };
     } else if (flag === "YELLOW") {
+      const isRectified = reasonCategory === "AGENT_RECTIFIED_MISALIGNMENT";
       return {
         flag: "YELLOW",
         masStatusLabel,
         fastTrackApproved: false,
-        estimatedReviewDays: 3,
+        estimatedReviewDays: isRectified ? 2 : 3,
         customerFacingStatus: "SUBMITTED_FOR_REVIEW",
-        customerFacingMessage: "Your signature has been securely received. Your policy application is queued for standard compliance review by our central underwriting team (Estimated 3–4 business days).",
+        customerFacingMessage: isRectified
+          ? "Your application and advisor clarifications have been securely received. Your policy is queued for standard compliance verification (Estimated 2 business days)."
+          : "Your signature has been securely received. Your policy application is queued for standard compliance review by our central underwriting team (Estimated 3–4 business days).",
         internalAuditNotes: internalNotes,
         submittedAt: now,
         reasonCategory,
