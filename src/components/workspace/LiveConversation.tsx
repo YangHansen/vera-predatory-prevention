@@ -32,7 +32,12 @@ export function LiveConversation({
   demo?: boolean;
   onRefresh: () => Promise<void>;
 }) {
-  const [elapsed, setElapsed] = useState(demo ? 738 : 0);
+  const [elapsed, setElapsed] = useState(
+    demo
+      ? 738
+      : (session.copilotEvents?.length || 0) * 60 +
+        (session.liveDialogueBuffer ? 15 : 0)
+  );
   const [policyOpen, setPolicyOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const [listening, setListening] = useState(demo);
@@ -102,6 +107,13 @@ export function LiveConversation({
     return () => clearTimeout(timer);
   }, [text, save]);
   useEffect(() => {
+    return () => {
+      if (buffer.current.trim()) {
+        void save(buffer.current);
+      }
+    };
+  }, [save]);
+  useEffect(() => {
     if (!listening) return;
     let seconds = 60;
     const timer = setInterval(() => {
@@ -115,18 +127,17 @@ export function LiveConversation({
     }, 1000);
     return () => clearInterval(timer);
   }, [listening, analyze]);
-  useEffect(() => {
-    if (session.status !== "HANDED_OFF") {
-      if (listening) void analyze();
-      setListening(false);
-    }
-  }, [session.status, listening, analyze]);
-
   const canRecord =
     session.status !== "CUSTOMER_REVIEWING" &&
     session.status !== "LIVENESS_CHECK" &&
     session.status !== "CONSENT_SIGNED" &&
     session.status !== "SUBMITTED";
+  useEffect(() => {
+    if (!canRecord) {
+      if (listening) void analyze();
+      setListening(false);
+    }
+  }, [canRecord, listening, analyze]);
   const policy =
     DUMMY_POLICIES.find((p) => p.id === session.policyId) || DUMMY_POLICIES[0];
   const analysis = session.copilotEvents.at(-1);

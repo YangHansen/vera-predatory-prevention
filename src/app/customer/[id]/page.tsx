@@ -731,7 +731,18 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
             </button>
             <button
               type="button"
-              onClick={() => setWorkflowStep("LIVE_CONVERSATION")}
+              onClick={async () => {
+                try {
+                  await fetch(`/api/session/${sessionId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: "HANDED_OFF" }),
+                  });
+                } catch (e) {
+                  console.error("Failed to update session status to HANDED_OFF", e);
+                }
+                setWorkflowStep("LIVE_CONVERSATION");
+              }}
               className="flex-1 max-w-sm bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-extrabold text-sm py-4 px-8 rounded-2xl shadow-md transition-all uppercase tracking-wider text-center"
             >
               NEXT

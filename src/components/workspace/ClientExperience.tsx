@@ -270,6 +270,7 @@ export function ClientExperience({ id }: { id: string }) {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
+                status: "HANDED_OFF",
                 recordingConsent: audioConsent,
                 cameraConsent: cameraConsent,
               }),

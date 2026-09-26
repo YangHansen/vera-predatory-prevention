@@ -135,13 +135,17 @@ export function sessionToView(
   policy?: Policy,
   advisor?: AgentAccount,
 ): DemoSession {
+  const hasDialogueOrEvents =
+    Boolean(session.liveDialogueBuffer?.trim()) ||
+    Boolean(session.copilotEvents && session.copilotEvents.length > 0);
+
   const phase: DemoPhase =
     session.consentResult ||
     ["SUBMITTED", "CONSENT_SIGNED"].includes(session.status)
       ? "signed"
       : ["CUSTOMER_REVIEWING", "LIVENESS_CHECK"].includes(session.status)
         ? "review"
-        : ["HANDED_OFF"].includes(session.status)
+        : ["HANDED_OFF"].includes(session.status) || hasDialogueOrEvents
           ? "conversation"
           : "welcome";
   const name = session.customerName || "Client";

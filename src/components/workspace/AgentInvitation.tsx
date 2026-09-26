@@ -262,7 +262,13 @@ export function AgentInvitation({ id }: { id: string }) {
                 : "You can enter the consultation room now while waiting for your client to connect."}
             </p>
           </div>
-          <Link className="v-button primary" href={`/session/${id}`}>
+          <Link
+            className="v-button primary"
+            href={`/session/${id}`}
+            onClick={() => {
+              void update({ phase: "conversation" });
+            }}
+          >
             {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
           </Link>
         </div>
