@@ -49,21 +49,29 @@ export class BranchingEngine {
     const hasRedCopilot = redCopilotEvents.length > 0;
     const hasYellowCopilot = yellowCopilotEvents.length > 0;
 
-    // 2. Calculate Dynamic Touchpoints (Policy Summary Points + Discussion / Question Count)
-    const policySummaryPoints = Math.max(1, input.policySummaryCount ?? 4);
+    // 2. Calculate Weighted Touchpoints:
+    // - Each policy clause gives 3 touchpoints
+    // - Each conversation summary point gives 2 touchpoints
+    // - Each client question gives 3 touchpoints
+    const policyClausesCount = Math.max(1, input.policySummaryCount ?? 4);
 
-    const copilotDiscussionPoints = input.copilotEvents.reduce(
+    const copilotDiscussionCount = input.copilotEvents.reduce(
       (max, ev) => Math.max(max, ev.conversationSummary?.length || 0),
       0
     );
-    const copilotQuestions = input.copilotEvents.reduce(
+    const copilotQuestionsCount = input.copilotEvents.reduce(
       (max, ev) => Math.max(max, ev.clientQuestions?.length || 0),
       0
     );
 
-    const discussionPoints = Math.max(0, input.discussionPointCount ?? copilotDiscussionPoints);
-    const questionPoints = Math.max(0, input.questionCount ?? copilotQuestions);
-    const totalPoints = policySummaryPoints + discussionPoints + questionPoints;
+    const discussionCount = Math.max(0, input.discussionPointCount ?? copilotDiscussionCount);
+    const questionCount = Math.max(0, input.questionCount ?? copilotQuestionsCount);
+
+    const policySummaryTouchpoints = policyClausesCount * 3;
+    const discussionTouchpoints = discussionCount * 2;
+    const questionTouchpoints = questionCount * 3;
+
+    const totalPoints = policySummaryTouchpoints + discussionTouchpoints + questionTouchpoints;
 
     // 3. Calculate Customer Confusion Score (Duration & Intensity Weighted)
     const confusionEvents = input.liveness.confusionEvents || [];
@@ -97,7 +105,7 @@ export class BranchingEngine {
       if (hasElevatedCustomerConfusion) {
         reasonCategory = "COMPOUND_RISK";
         internalNotes.push(
-          `Compound Factor: Customer also exhibited elevated confusion (Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% vs 30% threshold of ${thresholdScore} across ${totalPoints} points) during policy summary review.`
+          `Compound Factor: Customer also exhibited elevated confusion (Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% vs 30% threshold of ${thresholdScore} across ${totalPoints} weighted touchpoints) during policy summary review.`
         );
       }
     } else if (hasElevatedCustomerConfusion) {
@@ -105,7 +113,7 @@ export class BranchingEngine {
       flag = "YELLOW";
       reasonCategory = "CUSTOMER_CONFUSION";
       internalNotes.push(
-        `Elevated Customer Confusion: All agent statements were compliant, but customer exhibited repeated confusion/hesitation during summary review (Confusion Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% exceeding 30% threshold of ${thresholdScore} across ${totalPoints} total summary & discussion points). Flagged for Secondary Audit.`
+        `Elevated Customer Confusion: All agent statements were compliant, but customer exhibited repeated confusion/hesitation during summary review (Confusion Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% exceeding 30% threshold of ${thresholdScore} across ${totalPoints} total weighted touchpoints [${policyClausesCount} clauses × 3, ${discussionCount} summary pts × 2, ${questionCount} questions × 3]). Flagged for Secondary Audit.`
       );
     }
 
@@ -138,7 +146,7 @@ export class BranchingEngine {
         customerFacingStatus: "APPROVED_FAST_TRACK",
         customerFacingMessage: "Your application has been verified and fast-tracked for expedited underwriting approval (Estimated 1 business day).",
         internalAuditNotes: [
-          `All Singapore MAS Fair Dealing criteria met: Clean advisor audio audit (${input.copilotEvents.length} compliant turns), verified liveness, informed consent confirmed. Customer confusion ratio: ${Math.round(confusionRatio * 100)}% (within 30% threshold of ${thresholdScore} across ${totalPoints} total summary & discussion points). Status: Approved.`
+          `All Singapore MAS Fair Dealing criteria met: Clean advisor audio audit (${input.copilotEvents.length} compliant turns), verified liveness, informed consent confirmed. Customer confusion ratio: ${Math.round(confusionRatio * 100)}% (within 30% threshold of ${thresholdScore} across ${totalPoints} weighted touchpoints). Status: Approved.`
         ],
         submittedAt: now,
         reasonCategory: "CLEAN_PASS",
