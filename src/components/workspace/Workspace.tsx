@@ -20,6 +20,7 @@ import {
   FileCheck2,
   LayoutDashboard,
   LifeBuoy,
+  Lock,
   LockKeyhole,
   Menu,
   MessageCircle,
@@ -209,16 +210,36 @@ export function Workspace({ section }: { section: Section }) {
       setFilter("Completed");
     const update = async () => {
       try {
-        const response = await fetch("/api/session", { cache: "no-store" });
+        const url = selectedAgentId
+          ? `/api/session?agentId=${encodeURIComponent(selectedAgentId)}`
+          : "/api/session";
+        const response = await fetch(url, { cache: "no-store" });
         const data = await response.json();
         if (!response.ok || !data.success)
           throw new Error("Unable to load sessions");
+
+        const normalizedSelected =
+          selectedAgentId === "agent_andi_sg01"
+            ? "agt_andi_01"
+            : selectedAgentId;
+
+        // Ensure strict session isolation: agents only see their own sessions
+        const agentSessions = data.sessions.filter(
+          (s: import("@/types").Session) => {
+            if (!selectedAgentId) return true;
+            const sAgent =
+              s.agentId === "agent_andi_sg01" ? "agt_andi_01" : s.agentId;
+            return sAgent === normalizedSelected;
+          },
+        );
+
         setSessions(
-          data.sessions.map((s: import("@/types").Session) =>
+          agentSessions.map((s: import("@/types").Session) =>
             sessionToView(
               s,
               policiesList.find((p) => p.id === s.policyId) ||
                 DUMMY_POLICIES.find((p) => p.id === s.policyId),
+              agentsList.find((a) => a.id === s.agentId),
             ),
           ),
         );
@@ -231,7 +252,7 @@ export function Workspace({ section }: { section: Section }) {
     void update();
     const timer = setInterval(update, 5000);
     return () => clearInterval(timer);
-  }, [policiesList]);
+  }, [policiesList, agentsList, selectedAgentId]);
 
   const filtered = sessions.filter(
     (s) =>
@@ -362,21 +383,17 @@ export function Workspace({ section }: { section: Section }) {
           </button>
           <div
             className="agent-profile"
-            style={{ cursor: "pointer" }}
-            onClick={() => {
-              localStorage.removeItem("vera_active_agent_id");
-              router.push("/login");
-            }}
-            title="Switch advisor profile or sign out"
+            style={{ cursor: "default" }}
+            title="Device locked to this authorized representative profile per MAS compliance. Reassign profile via /dev portal."
           >
             <span className="avatar agent-avatar">{advisorInitials}</span>
             <div>
               <strong>{activeAdvisor.fullName}</strong>
               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                {activeAdvisor.repNumber} · <span style={{ color: "#2459d3", fontWeight: 600 }}>Switch</span>
+                {activeAdvisor.repNumber} · <span style={{ color: "#059669", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 2 }}><Lock size={10} /> Locked</span>
               </span>
             </div>
-            <span className="online-dot" />
+            <span className="online-dot" style={{ background: "#10b981" }} />
           </div>
         </div>
       </aside>
@@ -844,25 +861,88 @@ export function Workspace({ section }: { section: Section }) {
                 required
               />
             </label>
-            <label className="form-field">
-              Licensed Advisor
-              <select
-                value={selectedAgentId}
-                onChange={(e) => setSelectedAgentId(e.target.value)}
+            <div className="form-field">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#172b4d" }}>
+                  Adviser Account
+                </span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "#0f766e",
+                    background: "#f0fdfa",
+                    border: "1px solid #ccfbf1",
+                    padding: "2px 8px",
+                    borderRadius: 9999,
+                  }}
+                  title="Device locked to this representative profile per MAS compliance"
+                >
+                  <Lock size={11} />
+                  Device Locked
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "12px 14px",
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 10,
+                }}
               >
-                {agentsList.length > 0 ? (
-                  agentsList.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.fullName} ({a.repNumber}) — {a.agencyFirm}
-                    </option>
-                  ))
-                ) : (
-                  <option value="agt_andi_01">
-                    Andi Wijaya (REP-SG-671234) — Great Eastern Life
-                  </option>
-                )}
-              </select>
-            </label>
+                <span
+                  className="avatar agent-avatar"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    background: "#e0e7ff",
+                    color: "#3730a3",
+                  }}
+                >
+                  {advisorInitials}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <strong style={{ fontSize: 13, color: "#0f172a", fontWeight: 700 }}>
+                      {activeAdvisor.fullName}
+                    </strong>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: "#1d4ed8",
+                        background: "#eff6ff",
+                        padding: "1px 5px",
+                        borderRadius: 4,
+                      }}
+                    >
+                      MAS CERTIFIED
+                    </span>
+                  </div>
+                  <span
+                    style={{
+                      display: "block",
+                      fontSize: 11,
+                      color: "#64748b",
+                      marginTop: 2,
+                    }}
+                  >
+                    {activeAdvisor.repNumber} · {activeAdvisor.agencyFirm}
+                  </span>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, margin: "4px 0 0" }}>
+                Session recorded and audited under your licensed MAS credentials.
+              </p>
+            </div>
             <label className="form-field">
               Policy to discuss
               <select

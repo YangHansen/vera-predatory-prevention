@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DeviceAgentSwitcher } from "@/components/dev/DeviceAgentSwitcher";
 import {
   ShieldCheck,
   Cpu,
@@ -62,6 +63,9 @@ export default function Home() {
             </span>
           </div>
         </div>
+
+        {/* Master Device Agent Switcher */}
+        <DeviceAgentSwitcher />
 
         {/* Feature Grid */}
         <div className="grid sm:grid-cols-3 gap-4 my-6">

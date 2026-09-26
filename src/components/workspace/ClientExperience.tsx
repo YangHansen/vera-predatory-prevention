@@ -68,6 +68,29 @@ export function ClientExperience({ id }: { id: string }) {
   const hasStroke = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const previousPhase = useRef(session?.phase);
+  const fallbackAdvisorName = typeof window !== "undefined" ? localStorage.getItem("vera_active_agent_name") : null;
+  const advisorFullName = session?.advisor?.fullName || fallbackAdvisorName || "Your advisor";
+  const advisorFirstName = session?.advisor?.fullName
+    ? session.advisor.fullName.split(" ")[0]
+    : fallbackAdvisorName
+      ? fallbackAdvisorName.split(" ")[0]
+      : "your advisor";
+  const advisorInitials = session?.advisor?.fullName
+    ? session.advisor.fullName
+        .split(/\s+/)
+        .map((n) => n[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase()
+    : fallbackAdvisorName
+      ? fallbackAdvisorName
+          .split(/\s+/)
+          .map((n) => n[0])
+          .slice(0, 2)
+          .join("")
+          .toUpperCase()
+      : "AG";
+
   const policy =
     session?.policyData ||
     DUMMY_POLICIES.find((p) =>
@@ -83,7 +106,7 @@ export function ClientExperience({ id }: { id: string }) {
     ...policy.simplifiedSummary.map((body, i) => ({
       title: policy.clauses[i]?.title || `Policy detail ${i + 1}`,
       body,
-      detail: `Ask ${session?.advisor?.fullName?.split(" ")[0] || "your advisor"} if you would like this explained.`,
+      detail: `Ask ${advisorFirstName} if you would like this explained.`,
     })),
     ...(session?.phase === "review"
       ? (
@@ -93,7 +116,7 @@ export function ClientExperience({ id }: { id: string }) {
         ).map((body) => ({
           title: "Conversation summary",
           body,
-          detail: "Ask your advisor to clarify anything before you agree.",
+          detail: `Ask ${advisorFirstName} to clarify anything before you agree.`,
         }))
       : []),
   ];
@@ -193,7 +216,7 @@ export function ClientExperience({ id }: { id: string }) {
       <div className="client-app missing-session">
         <Brand />
         <h1>Session unavailable</h1>
-        <p>{error || "Ask your advisor for a valid session link."}</p>
+        <p>{error || `Ask ${advisorFirstName} for a valid session link.`}</p>
         <p className="wizard-note" style={{ marginTop: 16 }}>
           Please contact your financial adviser for a valid consultation link.
         </p>
@@ -206,18 +229,6 @@ export function ClientExperience({ id }: { id: string }) {
   const minimizeCamera =
     reviewing && reviewStep !== 0 && reviewStep !== nodStep;
   const activeTerm = terms[Math.max(0, reviewStep - 1)];
-  const advisorFullName = session.advisor?.fullName || "Your advisor";
-  const advisorFirstName = session.advisor?.fullName
-    ? session.advisor.fullName.split(" ")[0]
-    : "your advisor";
-  const advisorInitials = session.advisor?.fullName
-    ? session.advisor.fullName
-        .split(/\s+/)
-        .map((n) => n[0])
-        .slice(0, 2)
-        .join("")
-        .toUpperCase()
-    : "AG";
   let title = "Following along";
   if (welcome)
     title = [
@@ -238,7 +249,7 @@ export function ClientExperience({ id }: { id: string }) {
               ? "Confirm understanding"
               : "Add your signature";
   if (signed) title = `Thank you, ${session.name.split(" ")[0]}.`;
-  if (help) title = questionSent ? "Question sent" : "Ask your advisor";
+  if (help) title = questionSent ? "Question sent" : `Ask ${advisorFirstName}`;
   const stageLabel = welcome
     ? "Before we start"
     : reviewing
@@ -259,6 +270,7 @@ export function ClientExperience({ id }: { id: string }) {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
+                status: "HANDED_OFF",
                 recordingConsent: audioConsent,
                 cameraConsent: cameraConsent,
               }),
@@ -705,7 +717,7 @@ export function ClientExperience({ id }: { id: string }) {
                       <Check size={32} />
                     </div>
                     <p>
-                      Your consent has been received. {session.advisor?.fullName?.split(" ")[0] || "Your advisor"} will explain what
+                      Your consent has been received. {advisorFirstName} will explain what
                       happens next.
                     </p>
                     <dl className="wizard-receipt">

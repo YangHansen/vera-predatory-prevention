@@ -97,7 +97,9 @@ export function SessionHistory({ session }: { session: DemoSession }) {
                       : "#b91c1c",
                 }}
               >
-                {result?.masStatusLabel || (result?.flag ? getMasStatusLabel(result.flag) : session.status)}
+                {result?.reasonCategory === "AGENT_RECTIFIED_MISALIGNMENT"
+                  ? "Secondary Audit (Self-Corrected)"
+                  : result?.masStatusLabel || (result?.flag ? getMasStatusLabel(result.flag) : session.status)}
               </strong>
             </span>
           </div>
@@ -190,7 +192,11 @@ export function SessionHistory({ session }: { session: DemoSession }) {
                   </p>
                 </li>
                 <li>
-                  <strong>{session.status}</strong>
+                  <strong>
+                    {result?.reasonCategory === "AGENT_RECTIFIED_MISALIGNMENT"
+                      ? "Secondary audit queued (Rectified misstatement)"
+                      : session.status}
+                  </strong>
                   <p>
                     {result?.internalAuditNotes.join(" ") ||
                       (session.isExample

@@ -34,6 +34,29 @@ process.chdir(temp);
   ).json();
   assert.equal(created.success, true);
   const id = created.session.id;
+
+  // Verify that different agents do not share sessions
+  const sarahCreated = await (
+    await sessions.POST(
+      request("/api/session", {
+        agentId: "agt_sarah_02",
+        customerName: "Sarah Client Fixture",
+      }),
+    )
+  ).json();
+  assert.equal(sarahCreated.success, true);
+
+  const andiList = await (
+    await sessions.GET(new NextRequest("http://localhost:3000/api/session?agentId=agt_andi_01"))
+  ).json();
+  const sarahList = await (
+    await sessions.GET(new NextRequest("http://localhost:3000/api/session?agentId=agt_sarah_02"))
+  ).json();
+
+  assert.equal(andiList.sessions.some((s) => s.id === sarahCreated.session.id), false);
+  assert.equal(sarahList.sessions.some((s) => s.id === id), false);
+  assert.equal(sarahList.sessions.some((s) => s.id === sarahCreated.session.id), true);
+
   const params = { params: Promise.resolve({ id }) };
   assert.equal(
     created.session.customerUrl,

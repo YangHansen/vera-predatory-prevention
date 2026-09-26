@@ -120,6 +120,9 @@ SPEAKER DIFFERENTIATION & AUDIT DIRECTIVES:
 - Agent Statement Compliance:
   * Any statement by the agent that misaligns with MAS regulations (e.g. omitting early surrender penalties, claiming non-guaranteed fund yields are guaranteed, downplaying pre-existing condition exclusions under Section 25(5) of the Insurance Act) MUST be flagged at least YELLOW (or RED for severe predatory deception).
   * If all statements by the agent are 100% compliant and transparent, flag GREEN.
+- Proactive Rectification Directive:
+  * Check if the Agent explicitly corrects, acknowledges, or retracts a previous mistake or non-compliant statement (e.g. "Let me clarify/correct what I said earlier", "I made a mistake, fund returns are not guaranteed", "Under Section 25(5) you must declare your medical conditions").
+  * If the agent proactively acknowledged and corrected the error with accurate statutory disclosures, output "rectification": { "isRectified": true, "targetIssueCode": "PREDATORY_GUARANTEE" | "SURRENDER_PENALTY" | "PRE_EXISTING_CONDITION" | "OTHER", "correctionStatement": "...", "originalStatementSnippet": "..." }.
 
 Confidence threshold for warning trigger is 0.80.
 
@@ -130,6 +133,12 @@ Output JSON format strictly in English:
   "isCompliant": boolean,
   "warningFlags": "GREEN" | "YELLOW" | "RED",
   "confidenceScore": number (0.0 to 1.0),
+  "rectification": {
+    "isRectified": boolean,
+    "targetIssueCode": string,
+    "correctionStatement": string,
+    "originalStatementSnippet": string
+  },
   "conversationSummary": [
     "string (concise 1-2 sentence plain-English summary of what was explained or discussed so far for the customer's live mobile screen)"
   ],
@@ -210,6 +219,7 @@ Output JSON format strictly in English:
             : [],
           speakerTurns: Array.isArray(parsed.speakerTurns) ? parsed.speakerTurns : [],
           coveredSectionIds: Array.isArray(parsed.coveredSectionIds) ? parsed.coveredSectionIds : [1],
+          rectification: parsed.rectification?.isRectified ? parsed.rectification : undefined,
           auditEngine: "google-gemini-live",
           modelUsed: GEMINI_MODEL,
           timestamp,
@@ -352,6 +362,95 @@ Output JSON format strictly in English:
         text: snippet,
         isQuestion: isClientQuestion,
       });
+    }
+
+    // 0.5. Check for Proactive Agent Rectification of a Prior Misstatement (CURE)
+    const isRectificationStatement =
+      (lower.includes("correct myself") ||
+        lower.includes("apologize") ||
+        lower.includes("apology") ||
+        lower.includes("let me clarify") ||
+        lower.includes("to clarify") ||
+        lower.includes("earlier i said") ||
+        lower.includes("earlier i mentioned") ||
+        lower.includes("made a mistake") ||
+        lower.includes("make a mistake") ||
+        lower.includes("to be clear") ||
+        lower.includes("retract") ||
+        lower.includes("i was mistaken")) &&
+      (lower.includes("not guaranteed") ||
+        lower.includes("depend on investment") ||
+        lower.includes("fund performance") ||
+        lower.includes("bonus can fluctuate") ||
+        lower.includes("bonuses are not guaranteed") ||
+        lower.includes("36-month") ||
+        lower.includes("lock-in") ||
+        lower.includes("surrender charge") ||
+        lower.includes("15%") ||
+        lower.includes("deduction") ||
+        lower.includes("section 25") ||
+        lower.includes("must declare") ||
+        lower.includes("duty of disclosure") ||
+        lower.includes("declare your") ||
+        lower.includes("declare all"));
+
+    if (isRectificationStatement) {
+      let targetIssueCode = "GENERAL_RECTIFICATION";
+      let topic: "PRE_EXISTING_CONDITION" | "SURRENDER_PENALTY" | "GUARANTEED_RETURN" | "PREMIUM_ESCALATION" | "OTHER" = "OTHER";
+      let explanation = "Advisor proactively corrected and clarified policy terms.";
+      if (lower.includes("not guaranteed") || lower.includes("fund performance") || lower.includes("bonus")) {
+        targetIssueCode = "MISLEADING_RETURN";
+        topic = "GUARANTEED_RETURN";
+        explanation = "Advisor proactively retracted an inaccurate return guarantee and clarified non-guaranteed fund performance.";
+      } else if (lower.includes("36-month") || lower.includes("surrender") || lower.includes("15%") || lower.includes("lock-in")) {
+        targetIssueCode = "SURRENDER_PENALTY";
+        topic = "SURRENDER_PENALTY";
+        explanation = "Advisor proactively clarified early surrender lock-in and contractual deductions.";
+      } else if (lower.includes("section 25") || lower.includes("declare")) {
+        targetIssueCode = "MISSING_DISCLOSURE";
+        topic = "PRE_EXISTING_CONDITION";
+        explanation = "Advisor proactively acknowledged and enforced mandatory duty of disclosure under Insurance Act Section 25(5).";
+      }
+
+      return {
+        isCompliant: true,
+        warningFlags: "GREEN",
+        confidenceScore: 0.98,
+        detectedIssues: [],
+        rectification: {
+          isRectified: true,
+          targetIssueCode,
+          correctionStatement: snippet,
+          curedAt: timestamp,
+        },
+        auditedQnAs: [
+          {
+            clientQuestion: "Clarification on previously discussed terms",
+            advisorAnswer: snippet,
+            isCompliant: true,
+            flag: "GREEN",
+            topic,
+            regulatoryNotice: "MAS Guidelines on Fair Dealing (Proactive Rectification)",
+            explanation,
+            compliantScript: snippet,
+          },
+        ],
+        suggestedAnswers: [
+          {
+            questionOrObjection: "Proactive Clarification Acknowledged",
+            suggestedResponse: "Thank you for listening. Let's make sure you're comfortable with these terms before proceeding.",
+            cheatSheetBullet: "Self-correction verified. Check client comprehension before moving to consent.",
+          },
+        ],
+        conversationSummary: [
+          "Advisor clarified previously discussed terms to ensure complete understanding.",
+          explanation,
+        ],
+        clientQuestions: [],
+        speakerTurns,
+        coveredSectionIds: [1, 2, 4],
+        timestamp,
+      };
     }
 
     // 1. Check for Q&A turns with pre-existing condition or non-disclosure violations (RED)

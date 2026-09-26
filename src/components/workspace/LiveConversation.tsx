@@ -32,7 +32,12 @@ export function LiveConversation({
   demo?: boolean;
   onRefresh: () => Promise<void>;
 }) {
-  const [elapsed, setElapsed] = useState(demo ? 738 : 0);
+  const [elapsed, setElapsed] = useState(
+    demo
+      ? 738
+      : (session.copilotEvents?.length || 0) * 60 +
+        (session.liveDialogueBuffer ? 15 : 0)
+  );
   const [policyOpen, setPolicyOpen] = useState(false);
   const [ending, setEnding] = useState(false);
   const [listening, setListening] = useState(demo);
@@ -102,6 +107,13 @@ export function LiveConversation({
     return () => clearTimeout(timer);
   }, [text, save]);
   useEffect(() => {
+    return () => {
+      if (buffer.current.trim()) {
+        void save(buffer.current);
+      }
+    };
+  }, [save]);
+  useEffect(() => {
     if (!listening) return;
     let seconds = 60;
     const timer = setInterval(() => {
@@ -115,14 +127,17 @@ export function LiveConversation({
     }, 1000);
     return () => clearInterval(timer);
   }, [listening, analyze]);
+  const canRecord =
+    session.status !== "CUSTOMER_REVIEWING" &&
+    session.status !== "LIVENESS_CHECK" &&
+    session.status !== "CONSENT_SIGNED" &&
+    session.status !== "SUBMITTED";
   useEffect(() => {
-    if (session.status !== "HANDED_OFF") {
+    if (!canRecord) {
       if (listening) void analyze();
       setListening(false);
     }
-  }, [session.status, listening, analyze]);
-  const canRecord =
-    session.status === "HANDED_OFF" && session.recordingConsent === true;
+  }, [canRecord, listening, analyze]);
   const policy =
     DUMMY_POLICIES.find((p) => p.id === session.policyId) || DUMMY_POLICIES[0];
   const analysis = session.copilotEvents.at(-1);
@@ -133,14 +148,12 @@ export function LiveConversation({
   const reviewing =
     session.status === "CUSTOMER_REVIEWING" ||
     session.status === "LIVENESS_CHECK";
-  const stamp = demo
-    ? "12:00"
-    : analysis
-      ? new Date(analysis.timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "Not yet";
+  const stamp = analysis
+    ? new Date(analysis.timestamp).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Listening…";
   const clock = (value: number) =>
     `${Math.floor(value / 60)
       .toString()
@@ -169,9 +182,10 @@ export function LiveConversation({
             <h1>{reviewing ? "Client final review" : "Live conversation"}</h1>
             <p>
               {session.customerName} <span>·</span>{" "}
-              {demo ? "Sample insurance policy" : policy.name.split(" (")[0]}{" "}
-              <span>·</span> {reviewing ? "Client is reviewing independently on mobile" : `${clock(elapsed)} elapsed`}
-              {demo && <span className="room-example">Sample layout</span>}
+              {policy.name.split(" (")[0]} <span>·</span>{" "}
+              {reviewing
+                ? "Client is reviewing independently on mobile"
+                : `${clock(elapsed)} elapsed`}
             </p>
           </div>
           <div className="room-actions">
@@ -236,14 +250,19 @@ export function LiveConversation({
               <strong
                 style={{
                   color:
-                    analysis.warningFlags === "GREEN"
+                    analysis.rectification?.isRectified
+                      ? "#2563eb"
+                      : analysis.warningFlags === "GREEN"
                       ? "#15803d"
                       : analysis.warningFlags === "YELLOW"
                       ? "#b45309"
                       : "#b91c1c",
                 }}
               >
-                ● {getMasStatusLabel(analysis.warningFlags)}
+                ●{" "}
+                {analysis.rectification?.isRectified
+                  ? "Correction Logged · Rectified"
+                  : getMasStatusLabel(analysis.warningFlags)}
               </strong>
             </span>
           )}
@@ -344,23 +363,29 @@ export function LiveConversation({
             </header>
             <div className="room-card-body">
               <div
-                className={`room-advice ${attention || session.clientQuestion ? "attention" : ""}`}
+                className={`room-advice ${analysis?.rectification?.isRectified ? "rectified" : attention || session.clientQuestion ? "attention" : ""}`}
               >
                 <span>
                   <Info size={14} />
-                  {attention || session.clientQuestion
+                  {analysis?.rectification?.isRectified
+                    ? "PROACTIVE RECTIFICATION LOGGED"
+                    : attention || session.clientQuestion
                     ? "A QUESTION NEEDS ATTENTION"
                     : "NEXT STEP"}
                 </span>
                 <h3>
-                  {attention || session.clientQuestion
+                  {analysis?.rectification?.isRectified
+                    ? "Policy correction acknowledged"
+                    : attention || session.clientQuestion
                     ? "Explain the concern before continuing"
                     : "Give your client time to understand"}
                 </h3>
                 <p>
-                  {advice?.cheatSheetBullet ||
-                    analysis?.detectedIssues[0]?.explanation ||
-                    "Walk through the policy in plain language. Guidance will update after each audio review."}
+                  {analysis?.rectification?.isRectified
+                    ? "Your clarification has been verified and recorded. The misstatement has been cured and queued for standard secondary audit."
+                    : advice?.cheatSheetBullet ||
+                      analysis?.detectedIssues[0]?.explanation ||
+                      "Walk through the policy in plain language. Guidance will update after each audio review."}
                 </p>
               </div>
               <div className="room-wording">

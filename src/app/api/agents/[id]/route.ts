@@ -51,3 +51,18 @@ export async function PATCH(
     );
   }
 }
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  if (id === "agt_andi_01" || id === "agt_sarah_02" || id === "agt_marcus_03") {
+    return NextResponse.json(
+      { success: false, error: "Cannot delete core default representative accounts" },
+      { status: 400 }
+    );
+  }
+  const deleted = AgentStore.deleteAgent(id);
+  return NextResponse.json({ success: deleted });
+}

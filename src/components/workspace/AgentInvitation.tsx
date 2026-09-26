@@ -254,25 +254,23 @@ export function AgentInvitation({ id }: { id: string }) {
             <strong>
               {joined
                 ? "Client welcome complete"
-                : "Preview the conversation layout"}
+                : "Enter conversation room"}
             </strong>
             <p>
-              {!disclosed
-                ? "You can present the UI now; live recording still requires client consent."
-                : joined
-                  ? "Continue to the conversation workspace."
-                  : "Presentation mode does not record audio or verify identity."}
+              {joined
+                ? "Continue to the live conversation workspace."
+                : "You can enter the consultation room now while waiting for your client to connect."}
             </p>
           </div>
-          {joined && disclosed && live ? (
-            <Link className="v-button primary" href={`/session/${id}`}>
-              Continue to conversation <ArrowRight size={17} />
-            </Link>
-          ) : (
-            <Link className="v-button primary" href={`/session/${id}?presentation=1`}>
-              Preview conversation <ArrowRight size={17}/>
-            </Link>
-          )}
+          <Link
+            className="v-button primary"
+            href={`/session/${id}`}
+            onClick={() => {
+              void update({ phase: "conversation" });
+            }}
+          >
+            {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
+          </Link>
         </div>
         <div className="invite-preview-note">
           <Monitor size={16} />

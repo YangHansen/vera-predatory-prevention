@@ -161,6 +161,11 @@ async function runTests() {
   const updatedSession = SessionStore.getSession(session.id);
   console.log(`✅ Recorded Consent on Session: Status = ${updatedSession?.status}`);
 
+  // Clean up temporary test agent
+  if (createAgentResult.agent?.id) {
+    AgentStore.deleteAgent(createAgentResult.agent.id);
+  }
+
   console.log("\n🎉 All VERA AI Backend core modules, agents registry, multi-policy catalog, and compliance engines verified successfully!");
 }
 

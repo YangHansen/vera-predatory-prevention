@@ -62,6 +62,16 @@ export function SessionWorkspace({ id }: { id: string }) {
     const timer = setInterval(() => setElapsed((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [playing, session?.phase]);
+  useEffect(() => {
+    if (
+      live &&
+      session &&
+      (session.phase === "conversation" || session.backend?.liveDialogueBuffer?.trim()) &&
+      session.backend?.status === "QR_GENERATED"
+    ) {
+      void update({ phase: "conversation" });
+    }
+  }, [live, session, update]);
   if (!ready)
     return (
       <div className="session-app loading-state">
@@ -86,63 +96,71 @@ export function SessionWorkspace({ id }: { id: string }) {
   const analysis = session.backend?.copilotEvents.at(-1);
   const ended = session.phase === "signed";
   if (ended && !presentation) return <SessionHistory session={session} />;
-  if (
-    presentation || (live || session.isExample) &&
-    (session.phase === "conversation" || session.phase === "review")
-  ) {
-    const sampleBackend: import("@/types").Session = {
-      id: session.id,
-      agentId: "sample",
-      customerName: session.name,
-      policyId: policy.id,
-      status: (presentation ? presentationPhase : session.phase) === "review" ? "CUSTOMER_REVIEWING" : "HANDED_OFF",
-      recordingConsent: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      conversationSummary: session.conversationSummary?.split("\n") || ["You introduced the insurance policy.","Your client asked about the cost and how to cancel.","You reviewed where to find costs in the policy."],
-      clientQuestions: [
-        {
-          id: "sample-q1",
-          question: "What will I pay?",
-          status: "ANSWERED",
-          statusLabel: "Reviewed",
-          timestamp: "",
-        },
-        {
-          id: "sample-q2",
-          question: "How do I cancel?",
-          status: "PENDING",
-          statusLabel: "Needs explanation",
-          timestamp: "",
-        },
-      ],
-      copilotEvents: [
-        {
-          isCompliant: true,
-          warningFlags: "GREEN",
-          confidenceScore: 0.8,
-          detectedIssues: [],
-          suggestedAnswers: [
-            {
-              questionOrObjection: "How do I cancel?",
-              cheatSheetBullet:
-                "Ibu Siti asked how to cancel. Walk through the cancellation terms in plain language.",
-              suggestedResponse:
-                "Let’s review how cancellation works and any conditions that apply.",
-            },
-          ],
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    };
+  const hasDialogueOrEvents =
+    Boolean(session.backend?.liveDialogueBuffer?.trim()) ||
+    Boolean(session.backend?.copilotEvents && session.backend.copilotEvents.length > 0);
+
+  const inConversation =
+    presentation ||
+    session.phase === "conversation" ||
+    session.phase === "review" ||
+    hasDialogueOrEvents;
+
+  if (inConversation) {
+    const backendStatus: import("@/types").SessionStatus =
+      (presentation ? presentationPhase : session.phase) === "review"
+        ? "CUSTOMER_REVIEWING"
+        : (session.backend?.status === "CUSTOMER_REVIEWING" ||
+            session.backend?.status === "SUBMITTED" ||
+            session.backend?.status === "CONSENT_SIGNED")
+          ? session.backend.status
+          : "HANDED_OFF";
+
+    const cleanBackend: import("@/types").Session = session.backend
+      ? {
+          ...session.backend,
+          status: backendStatus,
+        }
+      : {
+          id: session.id,
+          agentId:
+            session.advisor?.id ||
+            (typeof window !== "undefined"
+              ? localStorage.getItem("vera_active_agent_id")
+              : null) ||
+            "agt_andi_01",
+          customerName: session.name,
+          policyId: policy.id,
+          status: backendStatus,
+          recordingConsent: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          conversationSummary: session.conversationSummary
+            ? session.conversationSummary.split("\n")
+            : [],
+          clientQuestions: [],
+          copilotEvents: [],
+        };
     return (
       <LiveConversation
         key={id}
-        session={presentation ? sampleBackend : session.backend || sampleBackend}
-        demo={presentation || !live}
+        session={cleanBackend}
+        demo={false}
         onRefresh={refresh}
-        onReset={async () => {if(presentation){setPresentationPhase("conversation");return true;}return update({phase:"conversation"});}}
-        onEnd={async () => {if(presentation){setPresentationPhase("review");return true;}return update({phase:"review"});}}
+        onReset={async () => {
+          if (presentation) {
+            setPresentationPhase("conversation");
+            return true;
+          }
+          return update({ phase: "conversation" });
+        }}
+        onEnd={async () => {
+          if (presentation) {
+            setPresentationPhase("review");
+            return true;
+          }
+          return update({ phase: "review" });
+        }}
       />
     );
   }
@@ -246,7 +264,16 @@ export function SessionWorkspace({ id }: { id: string }) {
             <span className="large-leaf-icon">
               <Users size={34} />
             </span>
-            <Link className="v-button primary" href={`/session/${id}?presentation=1`} onClick={()=>setPresentation(true)}>Preview conversation <ArrowRight size={16}/></Link>
+            <Link
+              className="v-button primary"
+              href={`/session/${id}?presentation=1`}
+              onClick={() => {
+                setPresentation(true);
+                void update({ phase: "conversation" });
+              }}
+            >
+              Enter conversation room <ArrowRight size={16} />
+            </Link>
             <span className="eyebrow">SESSION SETUP</span>
             <h2>Invite your client to begin.</h2>
             <p>

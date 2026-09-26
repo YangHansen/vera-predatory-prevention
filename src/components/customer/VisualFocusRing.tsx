@@ -733,9 +733,9 @@ export default function VisualFocusRing({
             } else if (b.width > w * 0.82) {
               currentHint = "Move slightly further back";
             } else if (offX < -26) {
-              currentHint = "Move face right →";
-            } else if (offX > 26) {
               currentHint = "← Move face left";
+            } else if (offX > 26) {
+              currentHint = "Move face right →";
             } else if (offY < -22) {
               currentHint = "Move face down ↓";
             } else if (offY > 22) {
@@ -862,9 +862,9 @@ export default function VisualFocusRing({
           const offY = skinCenterY - cy;
 
           if (offX < -26) {
-            currentHint = "Move face right →";
-          } else if (offX > 26) {
             currentHint = "← Move face left";
+          } else if (offX > 26) {
+            currentHint = "Move face right →";
           } else if (offY < -22) {
             currentHint = "Move face down ↓";
           } else if (offY > 22) {
@@ -908,10 +908,12 @@ export default function VisualFocusRing({
             oCtx.save();
             const alignRatio = consecutiveAlignedFramesRef.current / 12;
 
-            // Guide Oval (shifts color from dotted white/amber to blue as alignment builds)
+            // Guide Oval with drop shadow for maximum visibility against light and dark backgrounds
+            oCtx.shadowColor = "rgba(0, 0, 0, 0.75)";
+            oCtx.shadowBlur = 6;
             oCtx.setLineDash([8, 6]);
-            oCtx.strokeStyle = alignRatio > 0.4 ? "rgba(59, 130, 246, 0.95)" : "rgba(255, 255, 255, 0.85)";
-            oCtx.lineWidth = 2.5;
+            oCtx.strokeStyle = alignRatio > 0.4 ? "rgba(59, 130, 246, 0.95)" : "rgba(255, 255, 255, 0.95)";
+            oCtx.lineWidth = 3;
 
             // Dashed Guide Oval
             oCtx.beginPath();
@@ -919,9 +921,9 @@ export default function VisualFocusRing({
             oCtx.stroke();
             oCtx.setLineDash([]);
 
-            // Alignment Crosshairs / Corner Guides
-            oCtx.strokeStyle = alignRatio > 0.4 ? "rgba(59, 130, 246, 0.95)" : "rgba(234, 179, 8, 0.9)";
-            oCtx.lineWidth = 2;
+            // Alignment Crosshairs / Corner Guides with high-contrast shadow
+            oCtx.strokeStyle = alignRatio > 0.4 ? "rgba(59, 130, 246, 0.95)" : "rgba(234, 179, 8, 0.95)";
+            oCtx.lineWidth = 2.5;
             const r = 16;
             // Top-left
             oCtx.beginPath();
@@ -949,8 +951,8 @@ export default function VisualFocusRing({
             oCtx.stroke();
 
             // Centering Reticle
-            oCtx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-            oCtx.lineWidth = 1;
+            oCtx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+            oCtx.lineWidth = 1.5;
             oCtx.beginPath();
             oCtx.moveTo(cx - 8, cy);
             oCtx.lineTo(cx + 8, cy);
@@ -965,8 +967,10 @@ export default function VisualFocusRing({
 
           // FACE IS POSITIONED CORRECTLY: Draw verified green border and Complete High-Precision Face Mesh Wireframe
           oCtx.save();
-          oCtx.strokeStyle = "rgba(16, 185, 129, 0.9)";
-          oCtx.lineWidth = 2.5;
+          oCtx.shadowColor = "rgba(0, 0, 0, 0.75)";
+          oCtx.shadowBlur = 6;
+          oCtx.strokeStyle = "rgba(16, 185, 129, 0.95)";
+          oCtx.lineWidth = 3;
           oCtx.beginPath();
           oCtx.ellipse(cx, cy, rx, ry, 0, 0, 2 * Math.PI);
           oCtx.stroke();
@@ -1525,6 +1529,7 @@ export default function VisualFocusRing({
       <div className={`camera-viewfinder ${cameraActive ? "is-live" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted aria-label="Your live camera preview" />
         <canvas ref={canvasRef} hidden /><canvas ref={overlayCanvasRef} hidden />
+        {cameraActive && <div className="camera-face-guide" aria-hidden="true" />}
         {!cameraActive && <div className="camera-placeholder"><Camera size={28}/><strong>You’ll see yourself here</strong></div>}
       </div>
       <div className="camera-controls">
@@ -1585,6 +1590,47 @@ export default function VisualFocusRing({
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none -scale-x-100"
                 style={{ transform: "scaleX(-1)" }}
               />
+              {/* Helping Line & Face Placement Guide */}
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                <svg className="w-full h-full" viewBox="0 0 320 240" fill="none">
+                  <defs>
+                    <mask id="face-guide-mask-calib">
+                      <rect width="320" height="240" fill="white" />
+                      <ellipse cx="160" cy="120" rx="78" ry="83" fill="black" />
+                    </mask>
+                  </defs>
+                  {!isFacePositioned && (
+                    <rect width="320" height="240" fill="rgba(0, 0, 0, 0.22)" mask="url(#face-guide-mask-calib)" />
+                  )}
+                  {/* Oval Helping Line Guide */}
+                  <ellipse
+                    cx="160"
+                    cy="120"
+                    rx="78"
+                    ry="83"
+                    className={`transition-colors duration-200 ${
+                      isFacePositioned
+                        ? "stroke-emerald-400 stroke-[3]"
+                        : alignmentProgress > 0
+                        ? "stroke-blue-400 stroke-[2.5]"
+                        : "stroke-white stroke-[2.5]"
+                    }`}
+                    style={{
+                      filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.6))",
+                      strokeDasharray: isFacePositioned ? "none" : "8 6",
+                    }}
+                  />
+                  {/* Corner Alignment Reticles */}
+                  {!isFacePositioned && (
+                    <g className="stroke-amber-400 stroke-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                      <path d="M 85 55 L 75 55 L 75 70" />
+                      <path d="M 235 55 L 245 55 L 245 70" />
+                      <path d="M 75 170 L 75 185 L 85 185" />
+                      <path d="M 245 170 L 245 185 L 235 185" />
+                    </g>
+                  )}
+                </svg>
+              </div>
             </>
           ) : (
             <div className="text-center p-6 space-y-3">
@@ -1702,6 +1748,45 @@ export default function VisualFocusRing({
                   className="absolute inset-0 w-full h-full object-cover pointer-events-none -scale-x-100"
                   style={{ transform: "scaleX(-1)" }}
                 />
+                {/* Helping Line & Face Placement Guide for NOD_AND_VERIFY */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <svg className="w-full h-full" viewBox="0 0 320 240" fill="none">
+                    <defs>
+                      <mask id="face-guide-mask-nod">
+                        <rect width="320" height="240" fill="white" />
+                        <ellipse cx="160" cy="120" rx="78" ry="83" fill="black" />
+                      </mask>
+                    </defs>
+                    {!isFacePositioned && (
+                      <rect width="320" height="240" fill="rgba(0, 0, 0, 0.22)" mask="url(#face-guide-mask-nod)" />
+                    )}
+                    <ellipse
+                      cx="160"
+                      cy="120"
+                      rx="78"
+                      ry="83"
+                      className={`transition-colors duration-200 ${
+                        isFacePositioned
+                          ? "stroke-emerald-400 stroke-[3]"
+                          : alignmentProgress > 0
+                          ? "stroke-blue-400 stroke-[2.5]"
+                          : "stroke-white stroke-[2.5]"
+                      }`}
+                      style={{
+                        filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.6))",
+                        strokeDasharray: isFacePositioned ? "none" : "8 6",
+                      }}
+                    />
+                    {!isFacePositioned && (
+                      <g className="stroke-amber-400 stroke-2" style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.7))" }}>
+                        <path d="M 85 55 L 75 55 L 75 70" />
+                        <path d="M 235 55 L 245 55 L 245 70" />
+                        <path d="M 75 170 L 75 185 L 85 185" />
+                        <path d="M 245 170 L 245 185 L 235 185" />
+                      </g>
+                    )}
+                  </svg>
+                </div>
               </>
             ) : (
               <CameraOff className="w-6 h-6 text-slate-500" />
