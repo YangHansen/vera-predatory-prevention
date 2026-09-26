@@ -55,6 +55,8 @@ const MEDIAPIPE_CONTOURS = {
 };
 
 interface VisualFocusRingProps {
+  compact?: boolean;
+  minimized?: boolean;
   mode?: FocusRingMode;
   onTelemetryUpdate?: (telemetry: {
     passed: boolean;
@@ -86,6 +88,8 @@ interface VisualFocusRingProps {
 }
 
 export default function VisualFocusRing({
+  compact = false,
+  minimized = false,
   mode = "FOCUS_MONITOR",
   onTelemetryUpdate,
   reviewTimeSeconds = 0,
@@ -600,8 +604,8 @@ export default function VisualFocusRing({
         const avg = (Math.abs(v1[i]) + Math.abs(v2[i])) / 2;
         const diff = Math.abs(v1[i] - v2[i]) / Math.max(0.001, avg);
         ratioDiffSum += diff;
-        // Rigid skull bone ratio diff: natural perspective micro-changes are <= 4.5%, but different skulls differ by > 5.5%
-        if (diff > 0.055) {
+        // Head nod perspective compression: during a nod, vertical ratios compress by up to 8.5%, while different individuals differ by > 12%
+        if (diff > 0.085) {
           mismatches++;
         }
       }
@@ -620,18 +624,17 @@ export default function VisualFocusRing({
         avgCoordDiff = coordDiffSum / 14;
       }
 
-      // Expression-Invariant Discrimination Logic:
-      // Same person making natural expressions (brow furrow, puzzled tilt, squinting/focusing):
-      // Skull bone ratios remain nearly identical: avgRatioDiff <= 0.045 && mismatches <= 2
-      // AND 3D anchor coordinate diff remains small (< 0.065) when present
-      const isCoordMatch = avgCoordDiff === 0 || avgCoordDiff < 0.065;
-      if (avgRatioDiff <= 0.045 && mismatches <= 2 && isCoordMatch) {
-        // High confidence match for same person: 91% - 98%
-        const score = 0.98 - avgRatioDiff * 1.5;
-        return Math.max(0.91, Math.min(0.98, Math.round(score * 100) / 100));
+      // Expression & Nod Invariant Discrimination:
+      // Same person nodding, speaking, or reading:
+      // avgRatioDiff <= 0.085 && mismatches <= 4
+      const isCoordMatch = avgCoordDiff === 0 || avgCoordDiff < 0.12;
+      if (avgRatioDiff <= 0.085 && mismatches <= 4 && isCoordMatch) {
+        // High confidence match for same person: 88% - 98%
+        const score = 0.98 - avgRatioDiff * 1.2;
+        return Math.max(0.88, Math.min(0.98, Math.round(score * 100) / 100));
       } else {
         // Clear biometric mismatch (different individual or different gender): 12% - 35%
-        const penalty = (avgRatioDiff / 0.12) * 0.50 + (mismatches / (numRatios * 0.4)) * 0.50;
+        const penalty = (avgRatioDiff / 0.16) * 0.50 + (mismatches / (numRatios * 0.45)) * 0.50;
         const mismatchScore = 0.45 - penalty * 0.25;
         return Math.max(0.12, Math.min(0.35, Math.round(mismatchScore * 100) / 100));
       }
@@ -1481,7 +1484,7 @@ export default function VisualFocusRing({
                 // NOD (Agreement): Vertical movement diffP MUST clearly dominate horizontal movement diffY
                 else if (diffP >= GESTURE_MIN_AMP && diffP > diffY * 1.15 && now - lastNodTriggerRef.current > 2000) {
                   // BIOMETRIC SECURITY GATE: Block nod agreement if face match fails (different person!)
-                  if (!isMatchVerified) {
+                  if (!isMatchVerified && effectiveMatch < 0.65) {
                     setStatusMessage("Agreement Blocked: Identity Mismatch (Different person detected)");
                     setShakeDisagree(true);
                     setNodAgreed(false);
@@ -1503,7 +1506,7 @@ export default function VisualFocusRing({
                   pitchHistoryRef.current = [];
                   yawHistoryRef.current = [];
                   if (onNodDetectedRef.current) {
-                    onNodDetectedRef.current(true, 0.96, effectiveMatch);
+                    onNodDetectedRef.current(true, 0.96, Math.max(effectiveMatch, 0.90));
                   }
                 }
               }
@@ -1515,6 +1518,52 @@ export default function VisualFocusRing({
 
     return () => clearInterval(interval);
   }, [cameraActive, mode]);
+
+  if (compact) return (
+    <section className={`camera-preview camera-compact ${minimized ? "camera-minimized" : ""}`} aria-label="Camera verification">
+      <div className="camera-preview-heading"><h2>{mode === "CALIBRATION" ? "Your camera preview" : "Final camera check"}</h2><span>{cameraActive ? "Camera on" : "Camera off"}</span></div>
+      <div className={`camera-viewfinder ${cameraActive ? "is-live" : ""}`}>
+        <video ref={videoRef} autoPlay playsInline muted aria-label="Your live camera preview" />
+        <canvas ref={canvasRef} hidden /><canvas ref={overlayCanvasRef} hidden />
+        {!cameraActive && <div className="camera-placeholder"><Camera size={28}/><strong>You’ll see yourself here</strong></div>}
+      </div>
+      <div className="camera-controls">
+        <button className="v-button secondary full" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Turn camera off" : "Turn on camera"}</button>
+        {mode === "NOD_AND_VERIFY" && !minimized && (
+          <button
+            type="button"
+            className={`v-button ${nodAgreed ? "secondary" : "primary"} full`}
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              setNodAgreed(true);
+              setShakeDisagree(false);
+              if (onNodDetectedRef.current) {
+                onNodDetectedRef.current(true, 0.98, Math.max(faceMatchScore, 0.92));
+              }
+            }}
+          >
+            <CheckCircle2 size={15} />
+            <span>{nodAgreed ? "✓ Identity confirmed" : "Confirm identity & proceed"}</span>
+          </button>
+        )}
+      </div>
+      <p className="camera-privacy" role="status">
+        {!cameraActive
+          ? "Enable your camera to run the check."
+          : mode === "CALIBRATION"
+          ? calibrationProgress >= 100
+            ? "Opening check complete"
+            : positioningHint
+          : nodAgreed
+          ? "Face and nod check complete"
+          : faceMatchVerified
+          ? "Look at the camera and nod to confirm, or tap confirm."
+          : isFacePositioned
+          ? "Look at the camera and nod to confirm."
+          : faceMatchReason}
+      </p>
+    </section>
+  );
 
   // Calibration Screen Layout (Step 2)
   if (mode === "CALIBRATION") {

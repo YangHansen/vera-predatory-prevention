@@ -11,6 +11,14 @@ export type SessionStatus =
 
 export type ComplianceFlag = "GREEN" | "YELLOW" | "RED";
 
+export type MasStatusLabel = "Approved" | "Flagged for Secondary Audit" | "Compliance Risk";
+
+export function getMasStatusLabel(flag?: ComplianceFlag): MasStatusLabel {
+  if (flag === "YELLOW") return "Flagged for Secondary Audit";
+  if (flag === "RED") return "Compliance Risk";
+  return "Approved";
+}
+
 export interface AgentAccount {
   id: string; // e.g., "agt_andi_01"
   repNumber: string; // MAS Representative Number, e.g. "MAS-REP-882910"
@@ -176,6 +184,7 @@ export interface ConsentSubmissionRequest {
 
 export interface BranchingResult {
   flag: ComplianceFlag;
+  masStatusLabel?: MasStatusLabel;
   fastTrackApproved: boolean;
   estimatedReviewDays: number; // 1 for Green, 3-4 for Yellow
   customerFacingStatus: "APPROVED_FAST_TRACK" | "SUBMITTED_FOR_REVIEW";
@@ -185,6 +194,10 @@ export interface BranchingResult {
   reasonCategory?: "CLEAN_PASS" | "AGENT_MISALIGNMENT" | "CUSTOMER_CONFUSION" | "COMPOUND_RISK" | "INVALID_SIGNATURE";
   confusionScore?: number;
   confusionCount?: number;
+  confusionRatio?: number;
+  totalPointsCount?: number;
+  confusionThresholdScore?: number;
+  livenessScore?: number;
 }
 
 export interface ComplianceCertificate {
@@ -213,6 +226,7 @@ export interface ComplianceCertificate {
   };
   auditSummary: {
     overallFlag: ComplianceFlag;
+    statusLabel?: MasStatusLabel;
     auditEngine: string;
     fastTrackApproved: boolean;
     slaTargetDays: number;
@@ -249,6 +263,12 @@ export interface Session {
   qrCodeDataUrl?: string;
   customerUrl?: string;
   copilotEvents: CopilotAnalysisResult[];
+  presentedTopic?: number;
+  clientQuestion?: string;
+  recordingConsent?: boolean;
+  cameraConsent?: boolean;
+  calibratedMesh?: number[];
+  calibratedFaceImage?: string;
   syncedHighlight?: SyncedClauseHighlight;
   liveDialogueBuffer?: string;
   conversationSummary?: string[];

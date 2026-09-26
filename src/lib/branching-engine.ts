@@ -1,9 +1,18 @@
-import type { ComplianceFlag, BranchingResult, LivenessTelemetry, CopilotAnalysisResult } from "@/types";
+import type {
+  ComplianceFlag,
+  BranchingResult,
+  LivenessTelemetry,
+  CopilotAnalysisResult,
+} from "@/types";
+import { getMasStatusLabel } from "@/types";
 
 export interface BranchingInput {
   liveness: LivenessTelemetry;
   copilotEvents: CopilotAnalysisResult[];
   hasValidSignature: boolean;
+  policySummaryCount?: number;
+  discussionPointCount?: number;
+  questionCount?: number;
 }
 
 export class BranchingEngine {
@@ -12,20 +21,21 @@ export class BranchingEngine {
    * and Singapore MAS Guidelines on Fair Dealing & Clear Product Consent:
    * 
    * Decision Matrix:
-   * 1. RED FLAG:
+   * 1. RED FLAG ("Compliance Risk"):
    *    - Any agent statement flagged RED (severe predatory tactics, misleading guarantees, Section 25(5) violation).
    *    - Missing or invalid electronic signature.
    * 
-   * 2. YELLOW FLAG:
+   * 2. YELLOW FLAG ("Flagged for Secondary Audit"):
    *    - Trigger 1 (Agent Misalignment): Any agent statement flagged YELLOW (e.g. omitted surrender penalty disclosure,
    *      unaddressed customer condition, moderate pressure).
    *    - Trigger 2 (Customer Confusion with Compliant Agent Dialogue):
-   *      Even if 100% of agent statements are GREEN, if customer confusion score >= 5 OR persistent confusion count >= 4
-   *      while reading the summary before signing, the submission is automatically flagged YELLOW.
+   *      Even if 100% of agent statements are GREEN, if customer confusion score exceeds the dynamic 30% threshold
+   *      relative to the total count of policy summary points and live discussion/question points,
+   *      the submission is automatically flagged for secondary audit.
    * 
-   * 3. GREEN FLAG (Easy Pass for HQ / Fast-Track 1 Business Day):
+   * 3. GREEN FLAG ("Approved" / Fast-Track 1 Business Day):
    *    - All agent statements are GREEN.
-   *    - Customer confusion score < 5 and count < 4 (minimal/normal reading concentration).
+   *    - Customer confusion score is within the 30% threshold across total summary and discussion points.
    *    - Valid signature and liveness verified.
    */
   static evaluate(input: BranchingInput): BranchingResult {
@@ -39,7 +49,23 @@ export class BranchingEngine {
     const hasRedCopilot = redCopilotEvents.length > 0;
     const hasYellowCopilot = yellowCopilotEvents.length > 0;
 
-    // 2. Calculate Customer Confusion Score (Duration & Intensity Weighted)
+    // 2. Calculate Dynamic Touchpoints (Policy Summary Points + Discussion / Question Count)
+    const policySummaryPoints = Math.max(1, input.policySummaryCount ?? 4);
+
+    const copilotDiscussionPoints = input.copilotEvents.reduce(
+      (max, ev) => Math.max(max, ev.conversationSummary?.length || 0),
+      0
+    );
+    const copilotQuestions = input.copilotEvents.reduce(
+      (max, ev) => Math.max(max, ev.clientQuestions?.length || 0),
+      0
+    );
+
+    const discussionPoints = Math.max(0, input.discussionPointCount ?? copilotDiscussionPoints);
+    const questionPoints = Math.max(0, input.questionCount ?? copilotQuestions);
+    const totalPoints = policySummaryPoints + discussionPoints + questionPoints;
+
+    // 3. Calculate Customer Confusion Score (Duration & Intensity Weighted)
     const confusionEvents = input.liveness.confusionEvents || [];
     const confusionScore = input.liveness.confusionScore !== undefined
       ? input.liveness.confusionScore
@@ -49,12 +75,13 @@ export class BranchingEngine {
         }, 0);
     const confusionCount = input.liveness.confusionEventsCount ?? confusionEvents.length;
 
-    // Calibrated Thresholds: Score >= 8 points OR Count >= 6 events
-    // Normal, diligent policy reading naturally produces 2-5 deliberation points.
-    // Only sustained, elevated distress or chronic confusion (8+ pts or 6+ events) trips a Yellow Flag.
-    const hasElevatedCustomerConfusion = confusionScore >= 8 || confusionCount >= 6;
+    // Dynamic Threshold: 30% ratio of Confusion Score to Total Touchpoints
+    // (with a minimum floor of 3 weighted points to prevent false positives on brief summaries)
+    const thresholdScore = Math.max(3, Math.round(totalPoints * 0.30));
+    const confusionRatio = totalPoints > 0 ? confusionScore / totalPoints : 0;
+    const hasElevatedCustomerConfusion = confusionScore > thresholdScore && confusionScore >= 3;
 
-    // 3. Evaluate Compliance Decision
+    // 4. Evaluate Compliance Decision
     if (hasRedCopilot) {
       flag = "RED";
       reasonCategory = "COMPOUND_RISK";
@@ -70,19 +97,19 @@ export class BranchingEngine {
       if (hasElevatedCustomerConfusion) {
         reasonCategory = "COMPOUND_RISK";
         internalNotes.push(
-          `Compound Factor: Customer also exhibited elevated confusion (Score: ${confusionScore}, Events: ${confusionCount}) during policy summary review.`
+          `Compound Factor: Customer also exhibited elevated confusion (Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% vs 30% threshold of ${thresholdScore} across ${totalPoints} points) during policy summary review.`
         );
       }
     } else if (hasElevatedCustomerConfusion) {
-      // Trigger 2: All agent statements GREEN, but customer exhibited elevated confusion during summary review
+      // Trigger 2: All agent statements compliant, but customer exhibited elevated confusion during summary review
       flag = "YELLOW";
       reasonCategory = "CUSTOMER_CONFUSION";
       internalNotes.push(
-        `Elevated Customer Confusion: All agent statements were compliant, but customer exhibited repeated confusion/hesitation during summary review (Confusion Score: ${confusionScore}/8 threshold, Events: ${confusionCount}/6 threshold). Sent to HQ central compliance for secondary check.`
+        `Elevated Customer Confusion: All agent statements were compliant, but customer exhibited repeated confusion/hesitation during summary review (Confusion Score: ${confusionScore}, Ratio: ${Math.round(confusionRatio * 100)}% exceeding 30% threshold of ${thresholdScore} across ${totalPoints} total summary & discussion points). Flagged for Secondary Audit.`
       );
     }
 
-    // 4. Liveness baseline verification check
+    // 5. Liveness baseline verification check
     if (!input.liveness.passed) {
       if (flag === "GREEN") {
         flag = "YELLOW";
@@ -91,7 +118,7 @@ export class BranchingEngine {
       internalNotes.push("Customer liveness verification was inconclusive or failed facial mesh alignment check.");
     }
 
-    // 5. Signature verification
+    // 6. Signature verification
     if (!input.hasValidSignature) {
       flag = "RED";
       reasonCategory = "INVALID_SIGNATURE";
@@ -99,26 +126,32 @@ export class BranchingEngine {
     }
 
     const now = new Date().toISOString();
+    const masStatusLabel = getMasStatusLabel(flag);
+    const roundedRatio = Math.round(confusionRatio * 100) / 100;
 
     if (flag === "GREEN") {
       return {
         flag: "GREEN",
+        masStatusLabel,
         fastTrackApproved: true,
         estimatedReviewDays: 1,
         customerFacingStatus: "APPROVED_FAST_TRACK",
         customerFacingMessage: "Your application has been verified and fast-tracked for expedited underwriting approval (Estimated 1 business day).",
         internalAuditNotes: [
-          `All Singapore MAS Fair Dealing criteria met: Clean advisor audio audit (${input.copilotEvents.length} compliant turns), verified liveness, informed consent confirmed. Customer confusion score: ${confusionScore} (below threshold of 8). Easy Pass for HQ.`
+          `All Singapore MAS Fair Dealing criteria met: Clean advisor audio audit (${input.copilotEvents.length} compliant turns), verified liveness, informed consent confirmed. Customer confusion ratio: ${Math.round(confusionRatio * 100)}% (within 30% threshold of ${thresholdScore} across ${totalPoints} total summary & discussion points). Status: Approved.`
         ],
         submittedAt: now,
         reasonCategory: "CLEAN_PASS",
         confusionScore,
         confusionCount,
+        confusionRatio: roundedRatio,
+        totalPointsCount: totalPoints,
+        confusionThresholdScore: thresholdScore,
       };
     } else if (flag === "YELLOW") {
-      const isAgentMisaligned = reasonCategory === "AGENT_MISALIGNMENT" || reasonCategory === "COMPOUND_RISK";
       return {
         flag: "YELLOW",
+        masStatusLabel,
         fastTrackApproved: false,
         estimatedReviewDays: 3,
         customerFacingStatus: "SUBMITTED_FOR_REVIEW",
@@ -128,10 +161,14 @@ export class BranchingEngine {
         reasonCategory,
         confusionScore,
         confusionCount,
+        confusionRatio: roundedRatio,
+        totalPointsCount: totalPoints,
+        confusionThresholdScore: thresholdScore,
       };
     } else {
       return {
         flag: "RED",
+        masStatusLabel,
         fastTrackApproved: false,
         estimatedReviewDays: 4,
         customerFacingStatus: "SUBMITTED_FOR_REVIEW",
@@ -141,6 +178,9 @@ export class BranchingEngine {
         reasonCategory,
         confusionScore,
         confusionCount,
+        confusionRatio: roundedRatio,
+        totalPointsCount: totalPoints,
+        confusionThresholdScore: thresholdScore,
       };
     }
   }

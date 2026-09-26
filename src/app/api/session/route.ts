@@ -16,12 +16,19 @@ export async function POST(req: NextRequest) {
       "http://localhost:3000";
 
     const session = SessionStore.createSession({
-      agentId: agentId || "agent_andi_sg01",
+      agentId: agentId || "agt_andi_01",
       customerName: customerName || "Mdm. Tan",
       customerPhone: customerPhone || "+65 9123 4567",
-      policyId: policyId || "pol_retiresafe_2026",
+      policyId: policyId || "pol_retiresafe_sg",
       baseUrl: detectedOrigin,
     });
+
+    if (body.clientExperience === "workspace") {
+      session.customerUrl = `${detectedOrigin}/client/${session.id}`;
+      SessionStore.updateSession(session.id, {
+        customerUrl: session.customerUrl,
+      });
+    }
 
     // Generate QR Code Data URL for the customer hand-off link
     if (session.customerUrl) {
@@ -35,6 +42,10 @@ export async function POST(req: NextRequest) {
         },
       });
       session.status = "QR_GENERATED";
+      SessionStore.updateSession(session.id, {
+        qrCodeDataUrl: session.qrCodeDataUrl,
+        status: "QR_GENERATED",
+      });
     }
 
     return NextResponse.json({
