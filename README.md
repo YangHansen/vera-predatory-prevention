@@ -174,5 +174,75 @@ npm run build
 
 ---
 
+## Project Structure
+
+```
+vera/
+├── docs/                       # Architecture documentation & design handoffs
+│   ├── backend-frontend-integration.md
+│   ├── frontend-refresh.md
+│   └── ux-research-handoff.md
+├── public/
+│   ├── icons/                  # PWA icons (192x192, 512x512, maskable, SVG)
+│   ├── models/                 # MediaPipe Face Landmarker model asset (.task)
+│   ├── wasm/                   # MediaPipe WebAssembly runtimes (internal wasm/js)
+│   ├── icon.svg                # Application branding icon
+│   ├── vera-logo.svg           # Vera vector logo
+│   └── sw.js                   # PWA Service Worker (offline caching)
+├── src/
+│   ├── app/
+│   │   ├── login/              # Advisor authentication gate (/login)
+│   │   ├── client/[id]/        # Isolated customer mobile consent flow (/client/[id])
+│   │   ├── sessions/           # Past sessions queue & audit history (/sessions)
+│   │   ├── session/[id]/       # Completed compliance inspection & certificate download (/session/[id])
+│   │   ├── dev/                # Preserved developer testbench & raw engine tools (/dev)
+│   │   ├── copilot/            # AI Copilot speech & Q&A playground (/copilot)
+│   │   ├── customer/[id]/      # Legacy customer mobile test page (/customer/[id])
+│   │   ├── admin/agents/       # MAS Advisor registry management (/admin/agents)
+│   │   ├── agent/              # Advisor preview & invitation flows (/agent/[id]/invite)
+│   │   ├── policies/           # Regulated insurance policy catalog (/policies)
+│   │   ├── policy/             # Policy inspection & clause details (/policy)
+│   │   ├── guide/              # Advisor onboarding and compliance instructions (/guide)
+│   │   ├── api/                # Backend API Route Handlers
+│   │   │   ├── agents/         # MAS Representative registration, listing & deletion
+│   │   │   ├── audit/          # Cryptographic MAS Audit Certificate generator
+│   │   │   ├── consent/        # Consent submission & branching logic
+│   │   │   ├── copilot/        # AI Copilot dialogue analysis & live STT configuration
+│   │   │   ├── face/           # Biometric face verification endpoint (Tier 2 Gemini)
+│   │   │   ├── health/         # System & AI health check endpoint
+│   │   │   ├── policies/       # Multi-policy catalog endpoint
+│   │   │   ├── policy/         # Policy summarization API
+│   │   │   └── session/        # Session coordinator, QR generator, status & receipts
+│   │   ├── manifest.ts         # Next.js Web App Manifest generator
+│   │   ├── layout.tsx          # Root layout with PWA meta & viewport
+│   │   ├── page.tsx            # Main financial advisor workspace (/)
+│   │   └── globals.css         # Refreshed design system & styling
+│   ├── components/
+│   │   ├── workspace/          # Workspace, LiveConversation, SessionHistory, ClientExperience, CameraPreview
+│   │   ├── copilot/            # SpeechListener with Gemini 3.5 Flash-Lite & Web Speech fallback
+│   │   ├── customer/           # VisualFocusRing with 21-ratio Face Mesh & confusion engine
+│   │   ├── dev/                # DeviceAgentSwitcher for terminal binding & developer control
+│   │   └── pwa/                # PWA Service Worker registration component
+│   ├── lib/
+│   │   ├── agent-store.ts      # MAS Representative registry persistence (.agents-cache.json)
+│   │   ├── branching-engine.ts # Compliance evaluation engine (weighted touchpoints & dynamic threshold)
+│   │   ├── dummy-data.ts       # Static Singapore insurance policies catalog (SGD)
+│   │   ├── frontend-demo.ts    # Presentation adapters, session bridges & formatters
+│   │   ├── gemini.ts           # Google Gemini Multimodal STT, Vision, Self-Correction & Audit service
+│   │   └── session-store.ts    # Persistent session coordinator (.sessions-cache.json)
+│   └── types/
+│       └── index.ts            # TypeScript domain models (MAS status labels, telemetry, rectifications)
+├── scripts/
+│   ├── test-frontend-integration.cjs # Comprehensive end-to-end integration test runner
+│   └── test-api.mjs            # Core backend automated test runner
+├── .env.example                # Environment variable template
+├── package.json                # Project dependencies & scripts
+├── tailwind.config.ts          # Tailwind CSS configuration
+└── tsconfig.json               # TypeScript configuration
+```
+
+---
+
 ## Regulatory Compliance
 Designed in alignment with the **Monetary Authority of Singapore (MAS)** Guidelines on Fair Dealing, **Financial Advisers Act (FAA)**, **Insurance Act (Section 25(5))**, and **Personal Data Protection Act (PDPA)**.
+
