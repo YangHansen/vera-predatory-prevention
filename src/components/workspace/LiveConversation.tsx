@@ -318,35 +318,62 @@ export function LiveConversation({
                           ? "Reviewed"
                           : "Needs explanation"}
                       </span>
+                      {q.status !== "ANSWERED" && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#0052cc" }}
+                          onClick={async () => {
+                            if (demo) return;
+                            const response = await fetch(
+                              `/api/session/${session.id}`,
+                              {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ resolveQuestionId: q.id, clientQuestion: "" }),
+                              },
+                            );
+                            if (response.ok) await onRefresh();
+                            else setError("Could not mark the question as discussed.");
+                          }}
+                        >
+                          Mark discussed
+                        </button>
+                      )}
                     </div>
                   ))
                 ) : (
                   <p>No questions captured yet.</p>
                 )}
-                {session.clientQuestion && (
-                  <div className="room-question needs-answer">
-                    <span>“{session.clientQuestion}”</span>
-                    <button
-                      className="text-button"
-                      onClick={async () => {
-                        if (demo) return;
-                        const response = await fetch(
-                          `/api/session/${session.id}`,
-                          {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ clientQuestion: "" }),
-                          },
-                        );
-                        if (response.ok) await onRefresh();
-                        else
-                          setError("Could not mark the question as discussed.");
-                      }}
-                    >
-                      Mark discussed
-                    </button>
-                  </div>
-                )}
+                {session.clientQuestion &&
+                  !questions.some(
+                    (q) =>
+                      q.question.toLowerCase().trim() ===
+                      session.clientQuestion?.toLowerCase().trim(),
+                  ) && (
+                    <div className="room-question needs-answer">
+                      <span>“{session.clientQuestion}”</span>
+                      <button
+                        className="text-button"
+                        onClick={async () => {
+                          if (demo) return;
+                          const response = await fetch(
+                            `/api/session/${session.id}`,
+                            {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ clientQuestion: "" }),
+                            },
+                          );
+                          if (response.ok) await onRefresh();
+                          else
+                            setError("Could not mark the question as discussed.");
+                        }}
+                      >
+                        Mark discussed
+                      </button>
+                    </div>
+                  )}
               </div>
               <p className="room-footnote">
                 Summaries and questions update after each audio review.

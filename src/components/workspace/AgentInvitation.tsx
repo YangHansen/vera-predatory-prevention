@@ -252,25 +252,49 @@ export function AgentInvitation({ id }: { id: string }) {
         <div className="invite-action-bar">
           <div>
             <strong>
-              {joined
-                ? "Client welcome complete"
-                : "Enter conversation room"}
+              {disclosed && joined
+                ? "Setup & verification complete"
+                : !disclosed && !joined
+                  ? "Pending disclosure & client verification"
+                  : !disclosed
+                    ? "Confirmation required"
+                    : "Waiting for client verification"}
             </strong>
             <p>
-              {joined
-                ? "Continue to the live conversation workspace."
-                : "You can enter the consultation room now while waiting for your client to connect."}
+              {disclosed && joined
+                ? "Both disclosure and client verification are complete. You can now enter the consultation room."
+                : !disclosed && !joined
+                  ? "Please tick the disclosure checkbox and wait for your client to complete camera verification."
+                  : !disclosed
+                    ? "Please tick the checkbox confirming you have explained audio recording and camera use."
+                    : "Waiting for client to complete their opening camera check and join."}
             </p>
           </div>
-          <Link
-            className="v-button primary"
-            href={`/session/${id}`}
-            onClick={() => {
-              void update({ phase: "conversation" });
-            }}
-          >
-            {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
-          </Link>
+          {disclosed && joined ? (
+            <Link
+              className="v-button primary"
+              href={`/session/${id}`}
+              onClick={() => {
+                void update({ phase: "conversation" });
+              }}
+            >
+              {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className="v-button primary"
+              disabled
+              style={{ opacity: 0.5, cursor: "not-allowed" }}
+              title={
+                !disclosed
+                  ? "Please tick the disclosure checkbox above"
+                  : "Waiting for client to complete verification"
+              }
+            >
+              {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
+            </button>
+          )}
         </div>
         <div className="invite-preview-note">
           <Monitor size={16} />
