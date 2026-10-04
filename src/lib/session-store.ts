@@ -159,7 +159,17 @@ export class SessionStore {
       event.clientQuestions.forEach((q) => {
         const key = q.question.toLowerCase().trim();
         const prev = map.get(key);
-        map.set(key, { ...(prev || {}), ...q });
+        if (prev && prev.status === "ANSWERED") {
+          map.set(key, {
+            ...prev,
+            ...q,
+            status: "ANSWERED",
+            statusLabel: prev.statusLabel || q.statusLabel || "Discussed with advisor",
+            advisorAnswer: q.advisorAnswer || prev.advisorAnswer,
+          });
+        } else {
+          map.set(key, { ...(prev || {}), ...q });
+        }
       });
       session.clientQuestions = Array.from(map.values()).map((q, idx) => ({
         ...q,

@@ -81,16 +81,29 @@ export async function PATCH(
       const currentQuestions: ClientQuestionItem[] = [...(existing.clientQuestions || [])];
 
       if (qText.length > 0) {
-        // Add new question
+        // Add new question or update existing without duplicate
         changes.clientQuestion = qText.slice(0, 350);
-        const newQ: ClientQuestionItem = {
-          id: `q_${Date.now()}`,
-          question: qText.slice(0, 350),
-          status: "PENDING",
-          statusLabel: "Needs explanation",
-          timestamp: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
-        };
-        currentQuestions.push(newQ);
+        const normQ = qText.toLowerCase();
+        const existingIdx = currentQuestions.findIndex(
+          (q) => q.question.toLowerCase().trim() === normQ,
+        );
+        if (existingIdx >= 0) {
+          currentQuestions[existingIdx] = {
+            ...currentQuestions[existingIdx],
+            status: "PENDING",
+            statusLabel: "Needs explanation",
+            timestamp: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+          };
+        } else {
+          const newQ: ClientQuestionItem = {
+            id: `q_${Date.now()}`,
+            question: qText.slice(0, 350),
+            status: "PENDING",
+            statusLabel: "Needs explanation",
+            timestamp: new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }),
+          };
+          currentQuestions.push(newQ);
+        }
         changes.clientQuestions = currentQuestions;
       } else {
         // Clear/resolve pending questions
@@ -105,12 +118,22 @@ export async function PATCH(
 
     // Resolve specific question by ID if provided
     if (body.resolveQuestionId) {
-      const currentQuestions: ClientQuestionItem[] = [...(existing.clientQuestions || [])];
-      changes.clientQuestions = currentQuestions.map((q) =>
+      const baseQuestions: ClientQuestionItem[] = changes.clientQuestions || [...(existing.clientQuestions || [])];
+      changes.clientQuestions = baseQuestions.map((q) =>
         q.id === body.resolveQuestionId
-          ? { ...q, status: "ANSWERED", statusLabel: "Discussed with advisor" }
-          : q
+          ? {
+              ...q,
+              status: "ANSWERED",
+              statusLabel: "Discussed with advisor",
+              advisorAnswer: q.advisorAnswer || "Clarified and resolved directly with advisor.",
+            }
+          : q,
       );
+      // Clear clientQuestion if the resolved question was pending or if no other questions remain pending
+      const remainingPending = changes.clientQuestions.some((q) => q.status !== "ANSWERED");
+      if (!remainingPending) {
+        changes.clientQuestion = "";
+      }
     }
 
     if (body.policyId) changes.policyId = body.policyId;

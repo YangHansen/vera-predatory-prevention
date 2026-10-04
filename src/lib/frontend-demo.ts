@@ -1,4 +1,4 @@
-import type { Session, Policy, AgentAccount } from "@/types";
+import type { Session, Policy, AgentAccount, ClientQuestionItem } from "@/types";
 // Presentation-only fixtures. Never use these values as compliance evidence.
 export type DemoStatus =
   | "In progress"
@@ -19,6 +19,7 @@ export interface DemoSession {
   status: DemoStatus;
   phase: DemoPhase;
   question?: string;
+  clientQuestions?: ClientQuestionItem[];
   conversationSummary?: string;
   presentedTopic?: number;
   isExample?: boolean;
@@ -180,6 +181,7 @@ export function sessionToView(
     question:
       session.clientQuestion ||
       session.clientQuestions?.find((q) => q.status !== "ANSWERED")?.question,
+    clientQuestions: session.clientQuestions || [],
     presentedTopic:
       session.presentedTopic ??
       (policy?.clauses.findIndex(

@@ -61,7 +61,6 @@ export function ClientExperience({ id }: { id: string }) {
   const [question, setQuestion] = useState("");
   const [questionSent, setQuestionSent] = useState(false);
   const [typedSignature, setTypedSignature] = useState("");
-  const [signatureMode, setSignatureMode] = useState<"type" | "draw">("type");
   const [drawnSignature, setDrawnSignature] = useState("");
   const canvas = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -174,12 +173,12 @@ export function ClientExperience({ id }: { id: string }) {
     heading.current?.focus({ preventScroll: true });
   }, [welcomeStep, reviewStep, phase, help, topic]);
   useEffect(() => {
-    if (signatureMode !== "draw" || !canvas.current || !drawnSignature) return;
+    if (!canvas.current || !drawnSignature) return;
     const image = new Image();
     image.onload = () =>
       canvas.current?.getContext("2d")?.drawImage(image, 0, 0);
     image.src = drawnSignature;
-  }, [signatureMode, reviewStep, drawnSignature]);
+  }, [reviewStep, drawnSignature]);
   function pointer(e: PointerEvent<HTMLCanvasElement>, start: boolean) {
     const node = canvas.current,
       context = node?.getContext("2d");
@@ -294,17 +293,9 @@ export function ClientExperience({ id }: { id: string }) {
         setSubmitting(true);
         setSubmitError("");
         try {
-          let signatureDataUrl = drawnSignature;
-          if (signatureMode === "type") {
-            const signature = document.createElement("canvas");
-            signature.width = 600;
-            signature.height = 150;
-            const context = signature.getContext("2d");
-            if (!context) throw new Error("Signature unavailable");
-            context.font = "italic 40px serif";
-            context.fillStyle = "#172b4d";
-            context.fillText(typedSignature.trim(), 20, 85, 560);
-            signatureDataUrl = signature.toDataURL("image/png");
+          const signatureDataUrl = drawnSignature;
+          if (!signatureDataUrl) {
+            throw new Error("Please draw your signature in the box.");
           }
           const response = await fetch("/api/consent/submit", {
             method: "POST",
@@ -343,12 +334,31 @@ export function ClientExperience({ id }: { id: string }) {
           setSubmitting(false);
         }
       }
-    } else if (phase === "conversation") update({ phase: "review" });
+    } else if (phase === "conversation") {
+      if (topic < terms.length - 1) {
+        setTopic((t) => t + 1);
+      } else {
+        update({ phase: "review" });
+      }
+    }
   }
-  const signatureValid =
-    signatureMode === "type"
-      ? typedSignature.trim().length > 1
-      : Boolean(drawnSignature);
+  const expectedNameWords = (session?.name || "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const enteredNameWords = typedSignature
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  const isNameWordMatched =
+    expectedNameWords.length > 0 &&
+    expectedNameWords.length === enteredNameWords.length &&
+    expectedNameWords.every((w, i) => w === enteredNameWords[i]);
+  const hasDrawnSignature = Boolean(drawnSignature);
+  const signatureValid = isNameWordMatched && hasDrawnSignature;
+
   const disabled =
     (live && reviewing && !mesh) ||
     submitting ||
@@ -390,17 +400,26 @@ export function ClientExperience({ id }: { id: string }) {
                 : live
                   ? "Submit consent"
                   : "Submit demo consent"
-      : live
-        ? "Begin final review"
-        : "Preview final review";
+      : phase === "conversation"
+        ? topic < terms.length - 1
+          ? "Next policy detail"
+          : live
+            ? "Begin final review"
+            : "Preview final review"
+        : live
+          ? "Begin final review"
+          : "Preview final review";
   const canBack = welcome
     ? welcomeStep > 0
     : reviewing
       ? reviewStep > 0
-      : false;
+      : phase === "conversation"
+        ? topic > 0
+        : false;
   function back() {
     if (welcome) setWelcomeStep((s) => s - 1);
     else if (reviewing) setReviewStep((s) => s - 1);
+    else if (phase === "conversation") setTopic((t) => Math.max(0, t - 1));
   }
   return (
     <div className="client-app client-wizard">
@@ -573,24 +592,6 @@ export function ClientExperience({ id }: { id: string }) {
                       <h2>{terms[topic].title}</h2>
                       <p>{terms[topic].body}</p>
                     </article>
-                    <div className="wizard-topic-nav">
-                      <button
-                        aria-label="Previous policy detail"
-                        disabled={topic === 0}
-                        onClick={() => setTopic((t) => t - 1)}
-                      >
-                        <ArrowLeft size={17} />
-                        Previous
-                      </button>
-                      <button
-                        aria-label="Next policy detail"
-                        disabled={topic === terms.length - 1}
-                        onClick={() => setTopic((t) => t + 1)}
-                      >
-                        Next
-                        <ArrowRight size={17} />
-                      </button>
-                    </div>
                   </>
                 )}
                 {reviewing && reviewStep === 0 && (
@@ -649,66 +650,63 @@ export function ClientExperience({ id }: { id: string }) {
                   ))}
                 {reviewing && reviewStep === signatureStep && (
                   <>
-                    <div
-                      className="wizard-signature-tabs"
-                      role="group"
-                      aria-label="Signature method"
-                    >
+                    <label className="wizard-field">
+                      Your full legal name
+                      <input
+                        value={typedSignature}
+                        onChange={(e) => setTypedSignature(e.target.value)}
+                        autoComplete="name"
+                        placeholder={`Type "${session.name}"`}
+                      />
+                    </label>
+                    {typedSignature.trim().length > 0 && !isNameWordMatched && (
+                      <p className="wizard-error" style={{ fontSize: 13, marginTop: -4, marginBottom: 8 }}>
+                        Name must match &ldquo;{session.name}&rdquo; word by word.
+                      </p>
+                    )}
+                    {isNameWordMatched && (
+                      <p className="wizard-note" style={{ color: "#059669", fontSize: 13, marginTop: -4, marginBottom: 8, fontWeight: 600 }}>
+                        ✓ Name matches client record
+                      </p>
+                    )}
+
+                    <div className="wizard-signature-label" style={{ marginTop: 12 }}>
+                      <span>Sign inside the box</span>
                       <button
-                        aria-pressed={signatureMode === "type"}
-                        onClick={() => setSignatureMode("type")}
+                        type="button"
+                        onClick={() => {
+                          canvas.current
+                            ?.getContext("2d")
+                            ?.clearRect(0, 0, 600, 180);
+                          hasStroke.current = false;
+                          setDrawnSignature("");
+                        }}
                       >
-                        Type name
-                      </button>
-                      <button
-                        aria-pressed={signatureMode === "draw"}
-                        onClick={() => setSignatureMode("draw")}
-                      >
-                        Draw signature
+                        <Trash2 size={14} />
+                        Clear
                       </button>
                     </div>
-                    {signatureMode === "type" ? (
-                      <label className="wizard-field">
-                        Your full name
-                        <input
-                          value={typedSignature}
-                          onChange={(e) => setTypedSignature(e.target.value)}
-                          autoComplete="name"
-                          placeholder="Type your full name"
-                        />
-                      </label>
-                    ) : (
-                      <>
-                        <div className="wizard-signature-label">
-                          <span>Sign inside the box</span>
-                          <button
-                            onClick={() => {
-                              canvas.current
-                                ?.getContext("2d")
-                                ?.clearRect(0, 0, 600, 180);
-                              setDrawnSignature("");
-                            }}
-                          >
-                            <Trash2 size={14} />
-                            Clear
-                          </button>
-                        </div>
-                        <canvas
-                          className="wizard-signature-canvas"
-                          ref={canvas}
-                          width={600}
-                          height={180}
-                          onPointerDown={(e) => pointer(e, true)}
-                          onPointerMove={(e) => pointer(e, false)}
-                          onPointerUp={finishDrawing}
-                          onPointerCancel={finishDrawing}
-                          aria-label="Draw your demo signature"
-                        />
-                      </>
+                    <canvas
+                      className="wizard-signature-canvas"
+                      ref={canvas}
+                      width={600}
+                      height={180}
+                      onPointerDown={(e) => pointer(e, true)}
+                      onPointerMove={(e) => pointer(e, false)}
+                      onPointerUp={finishDrawing}
+                      onPointerCancel={finishDrawing}
+                      aria-label="Draw your signature"
+                    />
+                    {!hasDrawnSignature && (
+                      <p className="wizard-note" style={{ fontSize: 12, marginTop: 4 }}>
+                        Please draw your signature in the box above to confirm.
+                      </p>
                     )}
-                    <p className="wizard-note">
-                      Demo only. Your signature is not saved.
-                    </p>
+                    {hasDrawnSignature && (
+                      <p className="wizard-note" style={{ color: "#059669", fontSize: 12, marginTop: 4, fontWeight: 600 }}>
+                        ✓ Signature drawn
+                      </p>
+                    )}
                   </>
                 )}
                 {signed && (
@@ -734,6 +732,30 @@ export function ClientExperience({ id }: { id: string }) {
                         <dd>{advisorFullName}</dd>
                       </div>
                     </dl>
+                    {session.clientQuestions && session.clientQuestions.length > 0 && (
+                      <div className="wizard-qa-list" style={{ marginTop: 20, textAlign: "left", width: "100%" }}>
+                        <h2 style={{ fontSize: 13, fontWeight: 700, color: "#172b4d", marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                          Questions Addressed During Consultation
+                        </h2>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {session.clientQuestions.map((q, idx) => (
+                            <div key={q.id || idx} style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                                <strong style={{ fontSize: 13, color: "#0f172a" }}>
+                                  Q: &ldquo;{q.question}&rdquo;
+                                </strong>
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534" }}>
+                                  {q.statusLabel || "Answered"}
+                                </span>
+                              </div>
+                              <p style={{ fontSize: 12, color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                                {q.advisorAnswer || "Discussed and clarified with advisor."}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </>
@@ -852,12 +874,22 @@ export function ClientExperience({ id }: { id: string }) {
               <>
                 <button
                   className="v-button primary full"
-                  onClick={() =>
+                  onClick={() => {
+                    const qaBlock =
+                      session.clientQuestions && session.clientQuestions.length > 0
+                        ? `\n\nQUESTIONS DISCUSSED & ANSWERED:\n` +
+                          session.clientQuestions
+                            .map(
+                              (q) =>
+                                `• Question: “${q.question}”\n  Status: ${q.statusLabel}\n  Answer: ${q.advisorAnswer || "Clarified with advisor."}`,
+                            )
+                            .join("\n\n")
+                        : "";
                     downloadText(
                       `${id}-client-summary.txt`,
-                      `VERA SESSION SUMMARY\n${session.name}\n${session.policy}\nPremium: S$${policy.premiumAmount} ${policy.premiumFrequency}\n\n${policy.simplifiedSummary.join("\n\n")}\nYour advisor will explain next steps.`,
-                    )
-                  }
+                      `VERA SESSION SUMMARY\nClient: ${session.name}\nPolicy: ${session.policy}\nAdvisor: ${advisorFullName}\nReference: ${id === "preview" ? "VR-DEMO" : id}\nPremium: S$${policy.premiumAmount} ${policy.premiumFrequency}\n\nKEY POLICY TERMS:\n${policy.simplifiedSummary.join("\n\n")}${qaBlock}\n\nYour advisor will explain next steps.`,
+                    );
+                  }}
                 >
                   <Download size={17} />
                   Save summary

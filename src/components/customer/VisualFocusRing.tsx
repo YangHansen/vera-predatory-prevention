@@ -226,6 +226,7 @@ export default function VisualFocusRing({
 
   const isCalibratedRef = useRef(false);
   const calibrationProgressRef = useRef(0);
+  const hasPositionedForNodRef = useRef(false);
 
   // Reset calibration refs when switching mode
   useEffect(() => {
@@ -240,6 +241,9 @@ export default function VisualFocusRing({
       hasInitialAiVerifyFiredRef.current = false;
       hasAgreementAiVerifyFiredRef.current = false;
       aiVerificationStateRef.current = null;
+    }
+    if (mode !== "NOD_AND_VERIFY") {
+      hasPositionedForNodRef.current = false;
     }
   }, [mode]);
 
@@ -877,23 +881,31 @@ export default function VisualFocusRing({
 
       // Stability Hold Logic:
       // Only when a genuine face is found AND centered do we build alignment stability
+      const isNodMode = mode === "NOD_AND_VERIFY";
       if (faceFound && faceCentered) {
         consecutiveAlignedFramesRef.current = Math.min(12, consecutiveAlignedFramesRef.current + 1);
         const alignPct = Math.round((consecutiveAlignedFramesRef.current / 12) * 100);
-        if (consecutiveAlignedFramesRef.current >= 12) {
-          currentHint = "Face Positioned Correctly ✓";
+        if (consecutiveAlignedFramesRef.current >= 10) {
+          if (isNodMode) {
+            hasPositionedForNodRef.current = true;
+          }
+          currentHint = isNodMode ? (nodAgreed ? "Nod Confirmed ✓" : "Please nod your head to confirm") : "Face Positioned Correctly ✓";
         } else {
           currentHint = `Hold steady... (${alignPct}%)`;
         }
       } else {
-        // Face absent or off-center: immediately decay/reset stability
-        consecutiveAlignedFramesRef.current = Math.max(0, consecutiveAlignedFramesRef.current - 2);
+        if (isNodMode && hasPositionedForNodRef.current && faceFound) {
+          currentHint = nodAgreed ? "Nod Confirmed ✓" : "Please nod your head to confirm";
+        } else {
+          consecutiveAlignedFramesRef.current = Math.max(0, consecutiveAlignedFramesRef.current - 2);
+        }
       }
 
-      const stablePositioned = consecutiveAlignedFramesRef.current >= 12;
-      setIsFacePositioned(stablePositioned);
+      const stablePositioned = consecutiveAlignedFramesRef.current >= 10;
+      const isNodReady = isNodMode && hasPositionedForNodRef.current && faceFound;
+      setIsFacePositioned(stablePositioned || isNodReady);
       setPositioningHint(currentHint);
-      setAlignmentProgress(Math.round((consecutiveAlignedFramesRef.current / 12) * 100));
+      setAlignmentProgress(isNodReady ? 100 : Math.round((consecutiveAlignedFramesRef.current / 10) * 100));
 
       // Draw Guide Oval or Comprehensive Face Mesh Wireframe Overlay
       if (overlay) {
@@ -904,7 +916,7 @@ export default function VisualFocusRing({
           oCtx.clearRect(0, 0, w, h);
 
           // If face is NOT positioned correctly yet: Draw alignment target guide frame only!
-          if (!stablePositioned) {
+          if (!stablePositioned && !isNodReady) {
             oCtx.save();
             const alignRatio = consecutiveAlignedFramesRef.current / 12;
 
@@ -1471,14 +1483,15 @@ export default function VisualFocusRing({
                 const minY = Math.min(...yawHistoryRef.current.map((y) => y.yaw));
                 const diffY = maxY - minY;
 
-                const GESTURE_MIN_AMP = 0.024; // Subtle, natural movement amplitude
+                const GESTURE_MIN_AMP = 0.020; // Natural head nod amplitude
 
                 // SHAKE (Disagreement): Horizontal movement diffY MUST clearly dominate vertical movement diffP
-                if (diffY >= GESTURE_MIN_AMP && diffY > diffP * 1.15 && now - lastShakeTriggerRef.current > 2000) {
+                if (diffY >= GESTURE_MIN_AMP && diffY > diffP * 1.15 && now - lastShakeTriggerRef.current > 1500) {
                   lastShakeTriggerRef.current = now;
                   lastNodTriggerRef.current = 0; // prevent overlap
                   setShakeDisagree(true);
                   setNodAgreed(false);
+                  setStatusMessage("Disagreement gesture detected");
                   pitchHistoryRef.current = [];
                   yawHistoryRef.current = [];
                   if (onNodDetectedRef.current) {
@@ -1486,9 +1499,9 @@ export default function VisualFocusRing({
                   }
                 }
                 // NOD (Agreement): Vertical movement diffP MUST clearly dominate horizontal movement diffY
-                else if (diffP >= GESTURE_MIN_AMP && diffP > diffY * 1.15 && now - lastNodTriggerRef.current > 2000) {
-                  // BIOMETRIC SECURITY GATE: Block nod agreement if face match fails (different person!)
-                  if (!isMatchVerified && effectiveMatch < 0.65) {
+                else if (diffP >= GESTURE_MIN_AMP && diffP > diffY * 1.15 && now - lastNodTriggerRef.current > 1500) {
+                  // BIOMETRIC SECURITY GATE: Block nod agreement ONLY if confirmed mismatch by AI
+                  if (aiVerificationStateRef.current && !aiVerificationStateRef.current.isSamePerson) {
                     setStatusMessage("Agreement Blocked: Identity Mismatch (Different person detected)");
                     setShakeDisagree(true);
                     setNodAgreed(false);
@@ -1507,10 +1520,11 @@ export default function VisualFocusRing({
                   lastShakeTriggerRef.current = 0; // prevent overlap
                   setNodAgreed(true);
                   setShakeDisagree(false);
+                  setStatusMessage("Nod Agreement Confirmed ✓");
                   pitchHistoryRef.current = [];
                   yawHistoryRef.current = [];
                   if (onNodDetectedRef.current) {
-                    onNodDetectedRef.current(true, 0.96, Math.max(effectiveMatch, 0.90));
+                    onNodDetectedRef.current(true, 0.96, Math.max(effectiveMatch, 0.92));
                   }
                 }
               }

@@ -116,7 +116,15 @@ export function SessionHistory({ session }: { session: DemoSession }) {
               Customer Hesitation
               <strong>
                 {result?.confusionScore !== undefined
-                  ? `${result.confusionScore} pts (${Math.round((result.confusionRatio ?? 0) * 100)}% / 30% threshold)`
+                  ? (() => {
+                      const score = result.confusionScore;
+                      const ratioPct = Math.round((result.confusionRatio ?? 0) * 100);
+                      const abovePct = Math.max(0, ratioPct - 30);
+                      if (ratioPct > 30) {
+                        return `${score} pts (${abovePct}% above threshold)`;
+                      }
+                      return score > 0 ? `${score} pts (Within threshold)` : "0 pts (Attentive)";
+                    })()
                   : "0 pts (Attentive)"}
               </strong>
             </span>

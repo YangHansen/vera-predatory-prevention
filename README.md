@@ -22,15 +22,17 @@ By pairing a real-time AI Sales Copilot for financial advisors with an accessibl
   - Self-registration is strictly disabled; advisor credentials and MAS representative numbers (`MAS-REP-XXXXXX`) are verified and persisted in `AgentStore`.
   - **Device Terminal Lock**: To satisfy MAS market conduct requirements (Notice FAA-N03), the active advisor account is locked to the physical terminal. In-app account switching is restricted; administrators and developers can reassign device profiles via the dedicated **Device Agent Switcher** on `/dev`.
   - **Strict Session Isolation**: Multi-agent segregation ensures advisors only view, create, and audit their own assigned client sessions (`/api/session?agentId=...`).
-- **Session Dispatch & QR Hand-Off**:
+- **Session Dispatch & Pre-Consultation Hand-Off (`/agent/[id]/invite`)**:
   - Direct policy selection from the MAS-regulated catalog.
   - Instantly generates client pairing QR codes and secure, isolated mobile URLs (`/client/[id]`).
+  - **Advisor Disclosure & Client Verification Gate**: To safeguard regulatory compliance before recording starts, the `"Enter conversation"` button is strictly locked until the advisor confirms *"I have explained the audio recording and camera use"* AND the client finishes their opening camera check and joins.
 - **Live Consultation Room & Continuous Recording (`LiveConversation.tsx`)**:
   - Dual-panel interface with real-time speech transcription, policy clause bookmarks, and customer question tracking.
+  - **Manual Question Resolution & Deduplication**: If AI classification misses a verbal explanation, advisors can manually click `"Mark discussed"` on any question to mark it resolved, instantly unblocking the client's screen. Questions are normalized to prevent duplicate entries.
   - **Resilient Multi-Session Resumption**: If an advisor temporarily navigates back to `/sessions`, in-flight speech buffers are automatically flushed and preserved. Upon returning, previous transcripts and elapsed timers reload seamlessly with a **"Resume"** recording action.
   - **Fluid Advisor Exit**: When the meeting concludes, clicking **"End conversation"** triggers the final compliance audit and transitions the session to `"Client reviewing"`, allowing the customer to review independently on mobile.
 - **Session History & Compliance Audit Overview (`/sessions`, `/session/[id]`)**:
-  - Displays real-time MAS Status badges, Biometric Identity Match percentage, and Customer Hesitation metrics.
+  - Displays real-time MAS Status badges, Biometric Identity Match percentage, and Customer Hesitation metrics in the format: `xx pts (yy% above threshold)`.
   - Generates tamper-evident **MAS Compliance Certificates** (`/api/audit/[sessionId]`) and plain-text advisory summaries.
 
 ### 2. Isolated Customer Mobile Portal (`/client/[id]`)
@@ -42,9 +44,10 @@ By pairing a real-time AI Sales Copilot for financial advisors with an accessibl
 - **Stage-Based Biometric Consent Flow**:
   1. *Welcome & Camera Permissions*: Explains zero-video PDPA edge privacy guarantees.
   2. *Face Calibration*: Calibrates 478-point 3D facial mesh and captures rigid craniofacial baseline.
-  3. *Attentive Reading & Summary Review*: Presents plain-language policy pillars and conversation summary while monitoring customer concentration.
-  4. *Biometric Agreement & Identity Verification*: Verifies head nod gesture or fallback confirmation button, validating biometric face match against initial calibration.
-  5. *Digital Signature & Receipt*: HTML5 canvas signature recording with instant submission and post-signing confirmation.
+  3. *Attentive Reading & Following Along*: Presents plain-language policy details one at a time. The primary action button activates as `"Begin final review"` only on the final detail page, ensuring complete consumer review.
+  4. *Biometric Agreement & Identity Verification*: Verifies head nod gesture (`NOD_AND_VERIFY`) with expanded vertical pitch tolerance and persistent gesture tracking, preventing face drops during natural head nods, backed by an accessible manual confirmation fallback.
+  5. *Two-Factor Digital Signature*: Requires both full legal name (validated word-by-word against the advisor's client record) and a drawn digital signature stroke.
+  6. *Enriched Summary & Download*: Displays a comprehensive session summary including a dedicated Q&A section with all questions asked and advisor explanations, exportable to a plain-text receipt.
 
 ### 3. MAS Status Categorization & Weighted Touchpoint Engine
 Vera's branching engine (`src/lib/branching-engine.ts`) evaluates advisory sessions against Singapore MAS Guidelines on Fair Dealing using dynamic weighted touchpoints and an automated Self-Correction Protocol:
