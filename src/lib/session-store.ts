@@ -165,18 +165,23 @@ export class SessionStore {
             ...q,
             status: "ANSWERED",
             statusLabel: prev.statusLabel || q.statusLabel || "Discussed with advisor",
-            advisorAnswer: q.advisorAnswer || prev.advisorAnswer,
+            advisorAnswer: prev.resolvedByAgentAt ? prev.advisorAnswer : q.advisorAnswer || prev.advisorAnswer,
+            id: prev.id,
+            resolvedByAgentAt: prev.resolvedByAgentAt,
           });
         } else {
-          map.set(key, { ...(prev || {}), ...q });
+          map.set(key, { ...(prev || {}), ...q, id: prev?.id || q.id });
         }
       });
       session.clientQuestions = Array.from(map.values()).map((q, idx) => ({
         ...q,
-        id: q.id ? `${q.id.replace(/_\d+$/, "")}_${idx}` : `q_${Date.now()}_${idx}`,
+        id: existing.find((prev) => prev.question.toLowerCase().trim() === q.question.toLowerCase().trim())?.id || `q_${Date.now()}_${idx}`,
       }));
     }
 
+    if (session.clientQuestions?.length) {
+      session.clientQuestion = session.clientQuestions.find((q) => q.status !== "ANSWERED")?.question || "";
+    }
     if (event.coveredSectionIds && event.coveredSectionIds.length > 0) {
       const current = new Set(session.explainedSections || []);
       event.coveredSectionIds.forEach((sid) => current.add(sid));

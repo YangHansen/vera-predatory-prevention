@@ -79,6 +79,9 @@ export function useDemoSession(id: string) {
             review: "CUSTOMER_REVIEWING",
             signed: "SUBMITTED",
           }[patch.phase];
+        if (patch.agentDisclosureConfirmed !== undefined) body.agentDisclosureConfirmed = patch.agentDisclosureConfirmed;
+        if (patch.conversationEndedAt) body.endConversation = true;
+        if (patch.readTopics) body.readTopics = patch.readTopics;
         if ("question" in patch) body.clientQuestion = patch.question || "";
         if (patch.presentedTopic !== undefined)
           body.presentedTopic = patch.presentedTopic;

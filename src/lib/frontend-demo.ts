@@ -21,6 +21,9 @@ export interface DemoSession {
   question?: string;
   clientQuestions?: ClientQuestionItem[];
   conversationSummary?: string;
+  conversationEndedAt?: string;
+  readTopics?: number[];
+  agentDisclosureConfirmed?: boolean;
   presentedTopic?: number;
   isExample?: boolean;
   backend?: Session;
@@ -136,17 +139,13 @@ export function sessionToView(
   policy?: Policy,
   advisor?: AgentAccount,
 ): DemoSession {
-  const hasDialogueOrEvents =
-    Boolean(session.liveDialogueBuffer?.trim()) ||
-    Boolean(session.copilotEvents && session.copilotEvents.length > 0);
-
   const phase: DemoPhase =
     session.consentResult ||
     ["SUBMITTED", "CONSENT_SIGNED"].includes(session.status)
       ? "signed"
       : ["CUSTOMER_REVIEWING", "LIVENESS_CHECK"].includes(session.status)
         ? "review"
-        : ["HANDED_OFF"].includes(session.status) || hasDialogueOrEvents
+        : ["HANDED_OFF"].includes(session.status)
           ? "conversation"
           : "welcome";
   const name = session.customerName || "Client";
@@ -177,6 +176,9 @@ export function sessionToView(
           : phase === "welcome"
             ? "Ready to start"
             : "In progress",
+    conversationEndedAt: session.conversationEndedAt,
+    readTopics: session.readTopics,
+    agentDisclosureConfirmed: session.agentDisclosureConfirmed,
     conversationSummary: session.conversationSummary?.join("\n"),
     question:
       session.clientQuestion ||

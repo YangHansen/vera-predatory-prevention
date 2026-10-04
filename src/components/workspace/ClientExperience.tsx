@@ -20,6 +20,9 @@ import type { LivenessTelemetry, ConfusionEvent } from "@/types";
 import { CameraPreview } from "./CameraPreview";
 import { useDemoSession } from "./useDemoSession";
 import { DUMMY_POLICIES } from "@/lib/dummy-data";
+import { questionReviewTerms, reviewCameraMode } from "@/lib/client-review";
+import { namesMatch } from "@/lib/session-workflow";
+import { canBeginFinalReview, hasReadAllTopics } from "@/lib/review-readiness";
 import { downloadText } from "@/lib/frontend-demo";
 
 export function ClientExperience({ id }: { id: string }) {
@@ -55,6 +58,7 @@ export function ClientExperience({ id }: { id: string }) {
   const [cameraConsent, setCameraConsent] = useState(false);
   const [faceChecked, setFaceChecked] = useState(false);
   const [finalChecked, setFinalChecked] = useState(false);
+  const [entryChecked, setEntryChecked] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [topic, setTopic] = useState(0);
   const [help, setHelp] = useState(false);
@@ -118,12 +122,17 @@ export function ClientExperience({ id }: { id: string }) {
           detail: `Ask ${advisorFirstName} to clarify anything before you agree.`,
         }))
       : []),
+    ...(session?.phase === "review"
+      ? questionReviewTerms(session.clientQuestions || [])
+      : []),
   ];
   const nodStep = terms.length + 1;
   const consentStep = nodStep + 1;
   const signatureStep = consentStep + 1;
   const reviewTotal = signatureStep + 1;
   const phase = session?.phase;
+  const allRead = hasReadAllTopics(session?.readTopics, policy);
+  const reviewReady = Boolean(session && canBeginFinalReview(session, policy));
   useEffect(() => {
     if (!live || phase !== "review") return;
     const timer = setInterval(() => {
@@ -145,18 +154,11 @@ export function ClientExperience({ id }: { id: string }) {
     return () => clearInterval(timer);
   }, [id, live, phase]);
   useEffect(() => {
-    setTopic(
-      Math.min(
-        Math.max(session?.presentedTopic ?? 0, 0),
-        policy.simplifiedSummary.length,
-      ),
-    );
-  }, [session?.presentedTopic]);
-  useEffect(() => {
     if (previousPhase.current !== phase) {
       if (phase === "review") reviewStarted.current = Date.now();
       setReviewStep(0);
       setFinalChecked(false);
+      setEntryChecked(false);
       setAcknowledged(false);
       setTypedSignature("");
       setDrawnSignature("");
@@ -272,6 +274,8 @@ export function ClientExperience({ id }: { id: string }) {
                 status: "HANDED_OFF",
                 recordingConsent: audioConsent,
                 cameraConsent: cameraConsent,
+                calibratedMesh: mesh,
+                calibratedFaceImage: faceImage,
               }),
             });
             if (!response.ok) throw new Error("Could not save permissions.");
@@ -283,6 +287,7 @@ export function ClientExperience({ id }: { id: string }) {
         await update({ phase: "conversation", status: "In progress" });
       }
     } else if (reviewing) {
+      if (reviewStep === 0 && live && !entryChecked) return;
       if (reviewStep === nodStep && !live) setFinalChecked(true);
       if (reviewStep < signatureStep) setReviewStep((s) => s + 1);
       else if (finalChecked && acknowledged && !session?.question) {
@@ -305,6 +310,7 @@ export function ClientExperience({ id }: { id: string }) {
               customerId: session?.name,
               policyId: policy.id,
               signatureDataUrl,
+              signedName: typedSignature,
               liveness: {
                 ...telemetry.current,
                 confusionEvents: confusion.current,
@@ -335,35 +341,29 @@ export function ClientExperience({ id }: { id: string }) {
         }
       }
     } else if (phase === "conversation") {
-      if (topic < terms.length - 1) {
-        setTopic((t) => t + 1);
-      } else {
-        update({ phase: "review" });
+      if (allRead) {
+        if (reviewReady) await update({ phase: "review" });
+        return;
+      }
+      const readTopics = [...new Set([...(session?.readTopics || []), topic])];
+      if (await update({ readTopics })) {
+        const nextUnread = Array.from({ length: terms.length }, (_, i) => i)
+          .find((i) => !readTopics.includes(i));
+        if (nextUnread !== undefined) setTopic(nextUnread);
       }
     }
   }
-  const expectedNameWords = (session?.name || "")
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
-  const enteredNameWords = typedSignature
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
-  const isNameWordMatched =
-    expectedNameWords.length > 0 &&
-    expectedNameWords.length === enteredNameWords.length &&
-    expectedNameWords.every((w, i) => w === enteredNameWords[i]);
+  const isNameWordMatched = namesMatch(typedSignature, session?.name);
   const hasDrawnSignature = Boolean(drawnSignature);
   const signatureValid = isNameWordMatched && hasDrawnSignature;
 
   const disabled =
+    (phase === "conversation" && allRead && !reviewReady) ||
     (live && reviewing && !mesh) ||
     submitting ||
     busy ||
     (live && welcome && welcomeStep === 3 && !faceChecked) ||
+    (live && reviewing && reviewStep === 0 && !entryChecked) ||
     (live && reviewing && reviewStep === nodStep && !finalChecked) ||
     (welcome
       ? (welcomeStep === 1 && !audioConsent) ||
@@ -386,7 +386,7 @@ export function ClientExperience({ id }: { id: string }) {
       ][welcomeStep]
     : reviewing
       ? reviewStep === 0
-        ? "Start reading"
+        ? live ? "Start reading" : "Simulate face check & start reading"
         : reviewStep < terms.length
           ? "Next detail"
           : reviewStep === terms.length
@@ -401,11 +401,11 @@ export function ClientExperience({ id }: { id: string }) {
                   ? "Submit consent"
                   : "Submit demo consent"
       : phase === "conversation"
-        ? topic < terms.length - 1
-          ? "Next policy detail"
-          : live
-            ? "Begin final review"
-            : "Preview final review"
+        ? allRead
+          ? "Begin final review"
+          : topic < terms.length - 1
+            ? "Read and continue"
+            : "Finish reading"
         : live
           ? "Begin final review"
           : "Preview final review";
@@ -418,7 +418,10 @@ export function ClientExperience({ id }: { id: string }) {
         : false;
   function back() {
     if (welcome) setWelcomeStep((s) => s - 1);
-    else if (reviewing) setReviewStep((s) => s - 1);
+    else if (reviewing) {
+      if (reviewStep === nodStep) setFinalChecked(false);
+      setReviewStep((s) => s - 1);
+    }
     else if (phase === "conversation") setTopic((t) => Math.max(0, t - 1));
   }
   return (
@@ -592,12 +595,22 @@ export function ClientExperience({ id }: { id: string }) {
                       <h2>{terms[topic].title}</h2>
                       <p>{terms[topic].body}</p>
                     </article>
+                    <p role="status" className="wizard-camera-off">
+                      {allRead
+                        ? reviewReady
+                          ? "All details read. Your agent has ended the conversation. You can begin final review."
+                          : "All details read. Waiting for your agent to end the conversation."
+                        : session.conversationEndedAt
+                          ? "Your agent has ended the conversation. Read every detail to unlock final review."
+                          : "Read each detail while you talk. Final review opens after your agent ends the conversation."}
+                    </p>
                   </>
                 )}
                 {reviewing && reviewStep === 0 && (
                   <p>
-                    Your camera is used again during the summary and final
-                    identity check. You control when it turns on.
+                    {live
+                      ? "Turn on your camera, look into the frame, and nod to start your review. You will confirm again after reading."
+                      : "This preview simulates the opening review check. You will confirm again after reading."}
                   </p>
                 )}
                 {reviewing && reviewStep > 0 && reviewStep <= terms.length && (
@@ -606,7 +619,10 @@ export function ClientExperience({ id }: { id: string }) {
                       SUMMARY {reviewStep} OF {terms.length}
                     </p>
                     <p className="wizard-term">{activeTerm.body}</p>
-                    <p className="wizard-note">{activeTerm.detail}</p>
+                    <p className={"isQuestion" in activeTerm && activeTerm.isQuestion === true ? "wizard-answer" : "wizard-note"}>
+                      {"isQuestion" in activeTerm && activeTerm.isQuestion === true && <strong>Your agent’s answer</strong>}
+                      {activeTerm.detail}
+                    </p>
                   </>
                 )}
                 {reviewing && reviewStep === nodStep && (
@@ -749,7 +765,7 @@ export function ClientExperience({ id }: { id: string }) {
                                 </span>
                               </div>
                               <p style={{ fontSize: 12, color: "#475569", margin: 0, lineHeight: 1.5 }}>
-                                {q.advisorAnswer || "Discussed and clarified with advisor."}
+                                {q.advisorAnswer || "No answer summary was saved."}
                               </p>
                             </div>
                           ))}
@@ -778,9 +794,7 @@ export function ClientExperience({ id }: { id: string }) {
                 mode={
                   welcome
                     ? "CALIBRATION"
-                    : reviewStep === nodStep
-                      ? "NOD_AND_VERIFY"
-                      : "FOCUS_MONITOR"
+                    : reviewCameraMode(reviewStep, nodStep)
                 }
                 activeTopic={
                   reviewing && reviewStep > 0 && reviewStep <= terms.length
@@ -812,6 +826,10 @@ export function ClientExperience({ id }: { id: string }) {
                     confusion.current.push(event);
                 }}
                 onNodDetected={(agreed, confidence, matchScore) => {
+                  if (reviewStep === 0) {
+                    setEntryChecked(agreed);
+                    return;
+                  }
                   setFinalChecked(agreed);
                   telemetry.current = {
                     ...telemetry.current,
@@ -820,7 +838,7 @@ export function ClientExperience({ id }: { id: string }) {
                     gestureAgreement: {
                       nodDetected: agreed,
                       nodConfidence: confidence,
-                      shakeDetected: !agreed,
+                      shakeDetected: !agreed && confidence > 0,
                       faceMatchScore: matchScore,
                       faceMatchPassed: matchScore >= 0.82,
                     },

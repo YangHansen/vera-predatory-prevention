@@ -1,5 +1,7 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { hasCompletedOnboarding } from "@/lib/session-workflow";
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import {
@@ -17,7 +19,8 @@ import { Brand } from "./Brand";
 import { useDemoSession } from "./useDemoSession";
 
 export function AgentInvitation({ id }: { id: string }) {
-  const { session, ready, update, error, live } = useDemoSession(id);
+  const router = useRouter();
+  const { session, ready, update, error, live, busy } = useDemoSession(id);
   const [link, setLink] = useState("");
   const [qr, setQr] = useState("");
   const [qrError, setQrError] = useState(false);
@@ -55,7 +58,7 @@ export function AgentInvitation({ id }: { id: string }) {
         </Link>
       </div>
     );
-  const joined = session.phase !== "welcome";
+  const joined = session.phase !== "welcome" && (!live || Boolean(session.backend && hasCompletedOnboarding(session.backend)));
   const advisorInitials = session.advisor?.fullName
     ? session.advisor.fullName
         .split(/\s+/)
@@ -271,15 +274,15 @@ export function AgentInvitation({ id }: { id: string }) {
             </p>
           </div>
           {disclosed && joined ? (
-            <Link
+            <button
               className="v-button primary"
-              href={`/session/${id}`}
-              onClick={() => {
-                void update({ phase: "conversation" });
+              disabled={busy}
+              onClick={async () => {
+                if (await update({ agentDisclosureConfirmed: true })) router.push(`/session/${id}`);
               }}
             >
-              {joined ? "Continue to conversation" : "Enter conversation"} <ArrowRight size={17} />
-            </Link>
+              Continue to conversation <ArrowRight size={17} />
+            </button>
           ) : (
             <button
               type="button"
@@ -318,6 +321,9 @@ export function AgentInvitation({ id }: { id: string }) {
                     question: undefined,
                     conversationSummary: undefined,
                     presentedTopic: undefined,
+                    readTopics: [],
+                    conversationEndedAt: undefined,
+                    agentDisclosureConfirmed: false,
                   })
                 )
                   setDisclosed(false);

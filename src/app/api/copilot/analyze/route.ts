@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiService } from "@/lib/gemini";
 import { SessionStore } from "@/lib/session-store";
+import { canEnterConversation, isWorkspaceSession } from "@/lib/session-workflow";
 import { CopilotAnalysisRequest } from "@/types";
 
 export async function POST(req: NextRequest) {
@@ -15,6 +16,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const session = sessionId ? SessionStore.getSession(sessionId) : undefined;
+    if (session && isWorkspaceSession(session) && (!canEnterConversation(session) || session.status !== "HANDED_OFF" || session.conversationEndedAt)) {
+      return NextResponse.json({ success: false, error: "Recording is available only after onboarding and disclosure, during the conversation." }, { status: 409 });
+    }
     const dialogueSnippet = text || "Audio chunk received";
     const analysisResult = await GeminiService.analyzeSalesDialogue(dialogueSnippet);
 

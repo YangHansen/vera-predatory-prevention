@@ -97,6 +97,7 @@ export interface ClientQuestionItem {
   id: string;
   question: string;
   advisorAnswer?: string;
+  resolvedByAgentAt?: string;
   status: "ANSWERED" | "PENDING" | "NEEDS_CLARIFICATION";
   statusLabel: string;
   topic?: string;
@@ -186,6 +187,7 @@ export interface ConsentSubmissionRequest {
   customerId: string;
   policyId: string;
   signatureDataUrl: string;
+  signedName?: string;
   liveness: LivenessTelemetry;
   agentAudioAuditPassed: boolean;
   clientIp?: string;
@@ -279,8 +281,11 @@ export interface Session {
   qrCodeDataUrl?: string;
   customerUrl?: string;
   copilotEvents: CopilotAnalysisResult[];
+  conversationEndedAt?: string;
+  readTopics?: number[];
   presentedTopic?: number;
   clientQuestion?: string;
+  agentDisclosureConfirmed?: boolean;
   recordingConsent?: boolean;
   cameraConsent?: boolean;
   calibratedMesh?: number[];

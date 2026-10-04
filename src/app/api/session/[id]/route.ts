@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { SessionStore } from "@/lib/session-store";
 import { AgentStore } from "@/lib/agent-store";
 import { getPolicyById, getDefaultPolicy } from "@/lib/dummy-data";
+import { canEnterConversation, hasCompletedOnboarding, isWorkspaceSession } from "@/lib/session-workflow";
+import { canBeginFinalReview } from "@/lib/review-readiness";
 import type { Session, ClientQuestionItem } from "@/types";
 
 export async function GET(
@@ -59,6 +61,8 @@ export async function PATCH(
       changes.presentedTopic = body.presentedTopic;
     }
 
+    if (typeof body.agentDisclosureConfirmed === "boolean") changes.agentDisclosureConfirmed = body.agentDisclosureConfirmed;
+
     if (typeof body.recordingConsent === "boolean") {
       changes.recordingConsent = body.recordingConsent;
     }
@@ -76,7 +80,7 @@ export async function PATCH(
     }
 
     // Handle Client Questions
-    if (typeof body.clientQuestion === "string") {
+    if (typeof body.clientQuestion === "string" && !body.resolveQuestionId) {
       const qText = body.clientQuestion.trim();
       const currentQuestions: ClientQuestionItem[] = [...(existing.clientQuestions || [])];
 
@@ -118,6 +122,9 @@ export async function PATCH(
 
     // Resolve specific question by ID if provided
     if (body.resolveQuestionId) {
+      if (!existing.clientQuestions?.some((q) => q.id === body.resolveQuestionId)) {
+        return NextResponse.json({ success: false, error: "Question not found. Refresh and try again." }, { status: 404 });
+      }
       const baseQuestions: ClientQuestionItem[] = changes.clientQuestions || [...(existing.clientQuestions || [])];
       changes.clientQuestions = baseQuestions.map((q) =>
         q.id === body.resolveQuestionId
@@ -125,15 +132,14 @@ export async function PATCH(
               ...q,
               status: "ANSWERED",
               statusLabel: "Discussed with advisor",
-              advisorAnswer: q.advisorAnswer || "Clarified and resolved directly with advisor.",
+              resolvedByAgentAt: new Date().toISOString(),
+              advisorAnswer: typeof body.advisorAnswer === "string" && body.advisorAnswer.trim()
+                ? body.advisorAnswer.trim().slice(0, 2000) : q.advisorAnswer,
             }
           : q,
       );
       // Clear clientQuestion if the resolved question was pending or if no other questions remain pending
-      const remainingPending = changes.clientQuestions.some((q) => q.status !== "ANSWERED");
-      if (!remainingPending) {
-        changes.clientQuestion = "";
-      }
+      changes.clientQuestion = changes.clientQuestions.find((q) => q.status !== "ANSWERED")?.question || "";
     }
 
     if (body.policyId) changes.policyId = body.policyId;
@@ -142,6 +148,46 @@ export async function PATCH(
     if (body.customerPhone) changes.customerPhone = body.customerPhone;
     if (body.status) changes.status = body.status;
 
+    const candidate = { ...existing, ...changes };
+    if (isWorkspaceSession(existing)) {
+      if (body.status === "HANDED_OFF" && !hasCompletedOnboarding(candidate)) {
+        return NextResponse.json({ success: false, error: "Complete both privacy notices and the opening camera check first." }, { status: 409 });
+      }
+      if ((body.endConversation === true || body.dialogueBuffer !== undefined) && (!canEnterConversation(candidate) || existing.status !== "HANDED_OFF" || (body.dialogueBuffer !== undefined && existing.conversationEndedAt))) {
+        return NextResponse.json({ success: false, error: "Complete client onboarding and the agent disclosure before recording." }, { status: 409 });
+      }
+    }
+    if (body.status === "QR_GENERATED" && existing.status !== "QR_GENERATED") {
+      changes.readTopics = [];
+      changes.conversationEndedAt = undefined;
+      changes.calibratedMesh = undefined;
+      changes.calibratedFaceImage = undefined;
+      changes.recordingConsent = false;
+      changes.cameraConsent = false;
+      changes.agentDisclosureConfirmed = false;
+    }
+    const policy = getPolicyById(changes.policyId || existing.policyId) || getDefaultPolicy();
+    if (changes.policyId && changes.policyId !== existing.policyId) {
+      changes.readTopics = [];
+      changes.conversationEndedAt = undefined;
+    }
+    if (body.readTopics !== undefined) {
+      if (existing.status !== "HANDED_OFF" || !Array.isArray(body.readTopics) ||
+          !body.readTopics.every((i: number) => Number.isInteger(i) && i >= 0 && i <= policy.simplifiedSummary.length)) {
+        return NextResponse.json({ success: false, error: "Invalid reading progress." }, { status: 400 });
+      }
+      changes.readTopics = [...new Set<number>([...(changes.readTopics || existing.readTopics || []), ...body.readTopics])];
+    }
+    if (body.endConversation === true) {
+      if (existing.status !== "HANDED_OFF") {
+        return NextResponse.json({ success: false, error: "The client must finish onboarding first." }, { status: 409 });
+      }
+      changes.conversationEndedAt = existing.conversationEndedAt || new Date().toISOString();
+    }
+    if (["CUSTOMER_REVIEWING", "LIVENESS_CHECK"].includes(body.status) &&
+        !canBeginFinalReview({ ...existing, ...changes }, policy)) {
+      return NextResponse.json({ success: false, error: "Read every policy detail and wait for your agent to end the conversation before final review." }, { status: 409 });
+    }
     let updatedSession = SessionStore.updateSession(id, changes);
 
     if (body.dialogueBuffer !== undefined) {

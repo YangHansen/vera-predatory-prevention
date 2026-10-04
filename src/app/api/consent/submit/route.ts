@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BranchingEngine } from "@/lib/branching-engine";
 import { SessionStore } from "@/lib/session-store";
+import { canBeginFinalReview } from "@/lib/review-readiness";
+import { getPolicyById, getDefaultPolicy } from "@/lib/dummy-data";
+import { namesMatch, isWorkspaceSession } from "@/lib/session-workflow";
 import { ConsentSubmissionRequest } from "@/types";
 
 export async function POST(req: NextRequest) {
@@ -23,6 +26,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (isWorkspaceSession(session) && (
+      !["CUSTOMER_REVIEWING", "LIVENESS_CHECK"].includes(session.status) ||
+      !canBeginFinalReview(session, getPolicyById(session.policyId) || getDefaultPolicy())
+    )) {
+      return NextResponse.json({ success: false, error: "Complete the conversation and reading steps before signing." }, { status: 409 });
+    }
+    if ((isWorkspaceSession(session) || body.signedName !== undefined) && !namesMatch(body.signedName, session.customerName)) {
+      return NextResponse.json({ success: false, error: "Your full name must match the client name entered by your agent." }, { status: 400 });
+    }
+    if (isWorkspaceSession(session) && session.clientQuestions?.some((q) => q.status !== "ANSWERED")) {
+      return NextResponse.json({ success: false, error: "Ask your agent to resolve the remaining questions before signing." }, { status: 409 });
+    }
     const defaultLiveness = {
       passed: true,
       score: 0.95,
@@ -35,7 +50,6 @@ export async function POST(req: NextRequest) {
     const evaluatedLiveness = liveness || defaultLiveness;
     const hasValidSignature = Boolean(signatureDataUrl && signatureDataUrl.startsWith("data:image"));
 
-    const { getPolicyById, getDefaultPolicy } = await import("@/lib/dummy-data");
     const policy = getPolicyById(session.policyId) || getDefaultPolicy();
     const policySummaryCount = policy?.simplifiedSummary?.length || 4;
 

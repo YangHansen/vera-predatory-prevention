@@ -17,6 +17,17 @@ process.chdir(temp);
   const sessions = jiti(path.join(root, "src/app/api/session/route.ts"));
   const detail = jiti(path.join(root, "src/app/api/session/[id]/route.ts"));
   const consent = jiti(path.join(root, "src/app/api/consent/submit/route.ts"));
+  const { namesMatch, canEnterConversation } = jiti(path.join(root, "src/lib/session-workflow.ts"));
+  const { questionReviewTerms, reviewCameraMode } = jiti(path.join(root, "src/lib/client-review.ts"));
+  const { SessionStore } = jiti(path.join(root, "src/lib/session-store.ts"));
+  // BUG-003: both camera checkpoints detect nods; reading stays in focus mode.
+  assert.equal(reviewCameraMode(0, 8), "NOD_AND_VERIFY");
+  assert.equal(reviewCameraMode(8, 8), "NOD_AND_VERIFY");
+  assert.equal(reviewCameraMode(3, 8), "FOCUS_MONITOR");
+  // BUG-005: case/spacing are harmless; missing or different names are rejected.
+  assert.equal(namesMatch("  SITI   Aminah ", "Siti Aminah"), true);
+  assert.equal(namesMatch("Siti", "Siti Aminah"), false);
+  assert.equal(namesMatch("", ""), false);
   const { sessionToView } = jiti(path.join(root, "src/lib/frontend-demo.ts"));
   const request = (url, body, method = "POST") =>
     new NextRequest(`http://localhost:3000${url}`, {
@@ -67,10 +78,20 @@ process.chdir(temp);
     (
       await detail.PATCH(request(`/api/session/${id}`, body, "PATCH"), params)
     ).json();
+  assert.equal((await patch({ endConversation: true })).success, false);
+  assert.equal(sessionToView({ ...created.session, liveDialogueBuffer: "Agent preparation" }).phase, "welcome");
+  // BUG-002/006: opening the link or saving dialogue cannot finish onboarding.
+  assert.equal((await patch({ status: "HANDED_OFF" })).success, false);
+  assert.equal((await patch({ status: "HANDED_OFF", recordingConsent: true, cameraConsent: true })).success, false);
+  assert.equal((await patch({ dialogueBuffer: "Premature recording" })).success, false);
+  const analyzeRoute = jiti(path.join(root, "src/app/api/copilot/analyze/route.ts"));
+  assert.equal((await analyzeRoute.POST(request("/api/copilot/analyze", { sessionId: id, text: "Premature recording" }))).status, 409);
   await patch({
     status: "HANDED_OFF",
     recordingConsent: true,
     cameraConsent: true,
+    calibratedMesh: Array(14).fill(0.5),
+    agentDisclosureConfirmed: true,
     clientQuestion: "What are the costs?",
     presentedTopic: 2,
   });
@@ -85,6 +106,58 @@ process.chdir(temp);
   assert.equal(view.question, "What are the costs?");
   assert.equal(view.presentedTopic, 2);
   assert.equal(view.backend.recordingConsent, true);
+  assert.equal(canEnterConversation({ ...view.backend, agentDisclosureConfirmed: false }), false);
+  assert.equal(canEnterConversation(view.backend), true);
+  // BUG-007: resolve only the selected question and preserve it across AI updates.
+  await patch({ clientQuestion: "Can I cancel?" });
+  const questions = SessionStore.getSession(id).clientQuestions;
+  const costQuestion = questions.find((q) => q.question === "What are the costs?");
+  const cancelQuestion = questions.find((q) => q.question === "Can I cancel?");
+  await patch({ resolveQuestionId: costQuestion.id, clientQuestion: "", advisorAnswer: "The premium is paid monthly." });
+  let resolved = SessionStore.getSession(id).clientQuestions;
+  assert.equal(resolved.find((q) => q.id === costQuestion.id).status, "ANSWERED");
+  assert.equal(resolved.find((q) => q.id === cancelQuestion.id).status, "PENDING");
+  SessionStore.addCopilotEvent(id, {
+    isCompliant: true, warningFlags: "GREEN", confidenceScore: 0.8, detectedIssues: [], suggestedAnswers: [], timestamp: new Date().toISOString(),
+    clientQuestions: [{ ...costQuestion, id: "changed-by-ai", status: "PENDING", advisorAnswer: "Overwritten answer" }]
+  });
+  resolved = SessionStore.getSession(id).clientQuestions;
+  assert.equal(resolved.find((q) => q.id === costQuestion.id).status, "ANSWERED");
+  assert.equal(resolved.find((q) => q.id === costQuestion.id).advisorAnswer, "The premium is paid monthly.");
+  assert.equal(sessionToView(SessionStore.getSession(id), response.policy).question, "Can I cancel?");
+  await patch({ resolveQuestionId: cancelQuestion.id, advisorAnswer: "The cancellation terms apply." });
+  assert.equal(sessionToView(SessionStore.getSession(id), response.policy).question, undefined);
+  // BUG-008: actual saved answers are in review steps, including long-answer pagination.
+  const qa = questionReviewTerms(resolved);
+  assert.equal(qa[0].body, "What are the costs?");
+  assert.equal(qa[0].detail, "The premium is paid monthly.");
+  assert.ok(questionReviewTerms([{ ...costQuestion, advisorAnswer: "Long explanation. ".repeat(100) }]).length > 1);
+  assert.equal((await patch({ resolveQuestionId: "missing-question" })).success, false);
+  assert.equal((await patch({ status: "CUSTOMER_REVIEWING" })).success, false);
+  await patch({ endConversation: true });
+  assert.equal((await patch({ status: "CUSTOMER_REVIEWING" })).success, false);
+  const count = response.policy.simplifiedSummary.length + 1;
+  assert.equal((await patch({ readTopics: [count] })).success, false);
+  for (let i = 0; i < count - 1; i++) {
+    await patch({ readTopics: [i] });
+    assert.equal((await patch({ status: "CUSTOMER_REVIEWING" })).success, false);
+  }
+  await patch({ readTopics: [count - 1] });
+  const beforeReview = await (await detail.GET(new NextRequest(`http://localhost:3000/api/session/${id}`), params)).json();
+  assert.equal(beforeReview.session.status, "HANDED_OFF");
+  assert.equal(beforeReview.session.readTopics.length, count);
+  const { canBeginFinalReview } = jiti(path.join(root, "src/lib/review-readiness.ts"));
+  assert.equal(canBeginFinalReview({ readTopics: beforeReview.session.readTopics }, response.policy), false);
+  assert.equal(canBeginFinalReview(beforeReview.session, response.policy), true);
+  const statusRoute = jiti(path.join(root, "src/app/api/session/[id]/status/route.ts"));
+  assert.equal((await statusRoute.PATCH(request("/status", { status: "CUSTOMER_REVIEWING" }, "PATCH"), { params: Promise.resolve({ id: sarahCreated.session.id }) })).status, 409);
+  const sarahParams = { params: Promise.resolve({ id: sarahCreated.session.id }) };
+  const sarahPatch = (body) => detail.PATCH(request("/session", body, "PATCH"), sarahParams);
+  await sarahPatch({ status: "HANDED_OFF" });
+  await sarahPatch({ readTopics: Array.from({ length: count }, (_, i) => i) });
+  assert.equal((await sarahPatch({ status: "CUSTOMER_REVIEWING" })).status, 409);
+  await sarahPatch({ endConversation: true });
+  assert.equal((await sarahPatch({ status: "CUSTOMER_REVIEWING" })).status, 200);
   await patch({ clientQuestion: "", status: "CUSTOMER_REVIEWING" });
   response = await (
     await detail.GET(
@@ -96,11 +169,15 @@ process.chdir(temp);
     sessionToView(response.session, response.policy).phase,
     "review",
   );
+  assert.equal((await consent.POST(request("/api/consent/submit", {
+    sessionId: id, signedName: "Wrong Name", signatureDataUrl: "data:image/png;base64,fixture"
+  }))).status, 400);
   const result = await (
     await consent.POST(
       request("/api/consent/submit", {
         sessionId: id,
         signatureDataUrl: "data:image/png;base64,fixture",
+        signedName: " Integration   Fixture ",
         liveness: {
           passed: false,
           score: 0,
@@ -135,7 +212,7 @@ process.chdir(temp);
   );
   assert.equal(missing.status, 404);
   console.log(
-    "PASS: backend session creation, client URL, permissions, questions, mirrored topic, review transition, consent result and missing-session handling.",
+    "PASS: session integration, onboarding/disclosure gates, both review gates, two camera modes, name validation, individual durable question resolution, and Q&A review steps.",
   );
 })()
   .catch((e) => {
