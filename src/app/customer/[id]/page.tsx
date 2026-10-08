@@ -933,7 +933,7 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
                                   : "bg-amber-100 text-amber-800"
                               }`}
                             >
-                              {q.statusLabel || (isAnswered ? `Reviewed with ${activeAdvisorName.split(" ")[0]}` : "Still needs explanation")}
+                              {q.statusLabel || (isAnswered ? "Reviewed" : "Still needs explanation")}
                             </span>
                             {q.topic && (
                               <span className="text-[10px] text-slate-400 uppercase font-mono">{q.topic}</span>
@@ -1394,7 +1394,7 @@ export default function CustomerConsentPage({ params }: CustomerPageProps) {
                     <div key={`${q.id || "q"}-${idx}`} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
                       <span className="font-semibold text-slate-800 text-[11px] block">&ldquo;{q.question}&rdquo;</span>
                       <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800">
-                        {q.statusLabel || "Reviewed with Advisor"}
+                        {q.statusLabel === "Reviewed with Advisor" || !q.statusLabel ? "Reviewed" : q.statusLabel}
                       </span>
                       {q.advisorAnswer && (
                         <p className="text-[10px] text-slate-500">{q.advisorAnswer}</p>

@@ -113,18 +113,20 @@ export function SessionHistory({ session }: { session: DemoSession }) {
           <div>
             <BrainCircuit size={19} />
             <span>
-              Review attention signals
+              Customer Hesitation
               <strong>
-                {result?.confusionRatio !== undefined
-                  ? result.confusionRatio > 0.30 ? "Above review threshold" : "Within review threshold"
-                  : "Not recorded"}
+                {result?.confusionScore !== undefined
+                  ? (() => {
+                      const score = result.confusionScore;
+                      const ratioPct = Math.round((result.confusionRatio ?? 0) * 100);
+                      const abovePct = Math.max(0, ratioPct - 30);
+                      if (ratioPct > 30) {
+                        return `${score} pts (${abovePct}% above threshold)`;
+                      }
+                      return score > 0 ? `${score} pts (Within threshold)` : "0 pts (Attentive)";
+                    })()
+                  : "0 pts (Attentive)"}
               </strong>
-              <small className="history-signal-detail">
-                {result?.confusionRatio !== undefined
-                  ? `Weighted signal score: ${Math.round(result.confusionRatio * 100)}%. Review threshold: 30%.`
-                  : "No attention measurement is available for this session."}
-              </small>
-              <small className="history-signal-detail">Camera signals can suggest a need for clarification; they do not prove confusion.</small>
             </span>
           </div>
           <div>

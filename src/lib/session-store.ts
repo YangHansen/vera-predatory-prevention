@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { Session, SessionStatus, CopilotAnalysisResult, LivenessTelemetry, BranchingResult } from "@/types";
 import { getDefaultPolicy } from "./dummy-data";
+import { mergeClientQuestions } from "./question-dedup";
 
 const CACHE_FILE = path.join(process.cwd(), ".sessions-cache.json");
 
@@ -154,29 +155,7 @@ export class SessionStore {
 
     if (event.clientQuestions && event.clientQuestions.length > 0) {
       const existing = session.clientQuestions || [];
-      const map = new Map<string, any>();
-      existing.forEach((q) => map.set(q.question.toLowerCase().trim(), q));
-      event.clientQuestions.forEach((q) => {
-        const key = q.question.toLowerCase().trim();
-        const prev = map.get(key);
-        if (prev && prev.status === "ANSWERED") {
-          map.set(key, {
-            ...prev,
-            ...q,
-            status: "ANSWERED",
-            statusLabel: prev.statusLabel || q.statusLabel || "Discussed with advisor",
-            advisorAnswer: prev.resolvedByAgentAt ? prev.advisorAnswer : q.advisorAnswer || prev.advisorAnswer,
-            id: prev.id,
-            resolvedByAgentAt: prev.resolvedByAgentAt,
-          });
-        } else {
-          map.set(key, { ...(prev || {}), ...q, id: prev?.id || q.id });
-        }
-      });
-      session.clientQuestions = Array.from(map.values()).map((q, idx) => ({
-        ...q,
-        id: existing.find((prev) => prev.question.toLowerCase().trim() === q.question.toLowerCase().trim())?.id || `q_${Date.now()}_${idx}`,
-      }));
+      session.clientQuestions = mergeClientQuestions(existing, event.clientQuestions);
     }
 
     if (session.clientQuestions?.length) {

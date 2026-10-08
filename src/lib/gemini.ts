@@ -114,9 +114,11 @@ You are evaluating a spoken insurance advisory consultation between:
 
 SPEAKER DIFFERENTIATION & AUDIT DIRECTIVES:
 - Distinguish speaker turns: Identify whether each spoken turn is an explanation by the Agent or a question/objection from the Client.
-- Client Inquiries: Whenever the prospective client asks a question (e.g. "Can I withdraw early?", "Do I declare high blood pressure?", "Is the return guaranteed?"):
-  * Capture it under "clientQuestions" and "auditedQnAs".
-  * Verify whether the Agent's answer was truthful, complete, and legally compliant under MAS Fair Dealing and the Insurance Act, or evasive/misleading.
+- Client Inquiries & Semantic Deduplication:
+  * Whenever the prospective client asks a question (e.g. "Can I withdraw early?", "Do I declare high blood pressure?", "Is the return guaranteed?"):
+    - Capture it under "clientQuestions" and "auditedQnAs".
+    - CRITICAL DEDUPLICATION: Consolidate client inquiries by underlying semantic intent. If the client repeats, rephrases, or asks a follow-up with the same core concern/meaning (even with different tones, speech filler words like "well", "is that right", or slight wording variations), output ONLY ONE clean canonical question representing that concern. Never output duplicate questions for the same inquiry.
+    - Verify whether the Agent's answer was truthful, complete, and legally compliant under MAS Fair Dealing and the Insurance Act, or evasive/misleading.
 - Agent Statement Compliance:
   * Any statement by the agent that misaligns with MAS regulations (e.g. omitting early surrender penalties, claiming non-guaranteed fund yields are guaranteed, downplaying pre-existing condition exclusions under Section 25(5) of the Insurance Act) MUST be flagged at least YELLOW (or RED for severe predatory deception).
   * If all statements by the agent are 100% compliant and transparent, flag GREEN.
@@ -156,7 +158,7 @@ Output JSON format strictly in English:
       "question": "string (Customer question asked during meeting)",
       "advisorAnswer": "string (Advisor response)",
       "status": "ANSWERED" | "PENDING" | "NEEDS_CLARIFICATION",
-      "statusLabel": "Reviewed with Advisor" | "Still needs explanation" | "Needs clarification",
+      "statusLabel": "Reviewed" | "Still needs explanation" | "Needs clarification",
       "topic": "string"
     }
   ],
@@ -775,7 +777,7 @@ Output JSON format strictly in English:
             question: "How do I declare pre-existing conditions and when does coverage start?",
             advisorAnswer: "Explained Section 25(5) disclosure and 12-month waiting period",
             status: "ANSWERED",
-            statusLabel: "Reviewed with Advisor",
+            statusLabel: "Reviewed",
             topic: "PRE_EXISTING_CONDITION",
             timestamp,
           },
@@ -828,7 +830,7 @@ Output JSON format strictly in English:
           question: "What are my regular monthly premiums and key benefits?",
           advisorAnswer: "Explained regular premium and coverage protection amount",
           status: "ANSWERED",
-          statusLabel: "Reviewed with Advisor",
+          statusLabel: "Reviewed",
           topic: "COVERAGE",
           timestamp,
         },

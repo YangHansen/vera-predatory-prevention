@@ -4,6 +4,7 @@ import { AgentStore } from "@/lib/agent-store";
 import { getPolicyById, getDefaultPolicy } from "@/lib/dummy-data";
 import { canEnterConversation, hasCompletedOnboarding, isWorkspaceSession } from "@/lib/session-workflow";
 import { canBeginFinalReview } from "@/lib/review-readiness";
+import { areQuestionsSemanticallySimilar } from "@/lib/question-dedup";
 import type { Session, ClientQuestionItem } from "@/types";
 
 export async function GET(
@@ -87,9 +88,8 @@ export async function PATCH(
       if (qText.length > 0) {
         // Add new question or update existing without duplicate
         changes.clientQuestion = qText.slice(0, 350);
-        const normQ = qText.toLowerCase();
         const existingIdx = currentQuestions.findIndex(
-          (q) => q.question.toLowerCase().trim() === normQ,
+          (q) => areQuestionsSemanticallySimilar(q.question, qText),
         );
         if (existingIdx >= 0) {
           currentQuestions[existingIdx] = {
@@ -115,7 +115,7 @@ export async function PATCH(
         changes.clientQuestions = currentQuestions.map((q) => ({
           ...q,
           status: "ANSWERED",
-          statusLabel: "Discussed with advisor",
+          statusLabel: "Reviewed",
         }));
       }
     }
@@ -131,7 +131,7 @@ export async function PATCH(
           ? {
               ...q,
               status: "ANSWERED",
-              statusLabel: "Discussed with advisor",
+              statusLabel: "Reviewed",
               resolvedByAgentAt: new Date().toISOString(),
               advisorAnswer: typeof body.advisorAnswer === "string" && body.advisorAnswer.trim()
                 ? body.advisorAnswer.trim().slice(0, 2000) : q.advisorAnswer,

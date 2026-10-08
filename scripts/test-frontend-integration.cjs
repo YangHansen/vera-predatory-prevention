@@ -211,8 +211,26 @@ process.chdir(temp);
     { params: Promise.resolve({ id: "missing" }) },
   );
   assert.equal(missing.status, 404);
+
+  // Semantic question deduplication test (handles tone, rephrasings, fillers, hyphens)
+  const { mergeClientQuestions } = jiti(path.join(root, "src/lib/question-dedup.ts"));
+  const sampleVariations = [
+    { question: "If I paid this premium for 10 years and I stay perfectly healthy, do I get any of my money back in the end?", status: "ANSWERED" },
+    { question: "What does the 90-day waiting period mean? What if I get sick next month?", status: "PENDING" },
+    { question: "What does the 90 day waiting period mean? What if I get sick next month?", status: "PENDING" },
+    { question: "What happens if I lose my job and miss a monthly payment? Does the policy get canceled automatically?", status: "PENDING" },
+    { question: "if I paid this premium for 10 years and I stay perfectly healthy Well I don't give any of my money back In the end is that right", status: "PENDING" },
+    { question: "what does that mean exactly What if I get sick next month can you explain it a bit", status: "PENDING" },
+    { question: "What happens if I lose my job and miss a monthly payment does the policy get canceled automatically or immediately", status: "PENDING" },
+    { question: "If I paid this premium for 10 years and stay perfectly healthy, do I get any money back?", status: "PENDING" },
+    { question: "What happens if I lose my job and miss a monthly payment?", status: "PENDING" },
+  ];
+  const deduplicated = mergeClientQuestions([], sampleVariations);
+  assert.equal(deduplicated.length, 3, "9 phrasing/tone variations should deduplicate into exactly 3 core questions");
+  assert.equal(deduplicated[0].status, "ANSWERED", "Preserves answered status");
+
   console.log(
-    "PASS: session integration, onboarding/disclosure gates, both review gates, two camera modes, name validation, individual durable question resolution, and Q&A review steps.",
+    "PASS: session integration, onboarding/disclosure gates, both review gates, two camera modes, name validation, individual durable question resolution, Q&A review steps, and semantic tone deduplication.",
   );
 })()
   .catch((e) => {

@@ -111,23 +111,10 @@ export function ClientExperience({ id }: { id: string }) {
       body,
       detail: `Ask ${advisorFirstName} if you would like this explained.`,
     })),
-    ...(session?.phase === "review"
-      ? (
-          session.conversationSummary?.split("\n").filter(Boolean) || [
-            "Review the points discussed with your advisor before signing.",
-          ]
-        ).map((body) => ({
-          title: "Conversation summary",
-          body,
-          detail: `Ask ${advisorFirstName} to clarify anything before you agree.`,
-        }))
-      : []),
-    ...(session?.phase === "review"
-      ? questionReviewTerms(session.clientQuestions || [])
-      : []),
   ];
   const nodStep = terms.length + 1;
-  const consentStep = nodStep + 1;
+  const summaryStep = nodStep + 1;
+  const consentStep = summaryStep + 1;
   const signatureStep = consentStep + 1;
   const reviewTotal = signatureStep + 1;
   const phase = session?.phase;
@@ -246,9 +233,11 @@ export function ClientExperience({ id }: { id: string }) {
           ? activeTerm.title
           : reviewStep === nodStep
             ? "Confirm it’s still you"
-            : reviewStep === consentStep
-              ? "Confirm understanding"
-              : "Add your signature";
+            : reviewStep === summaryStep
+              ? "Discussion summary"
+              : reviewStep === consentStep
+                ? "Confirm understanding"
+                : "Add your signature";
   if (signed) title = `Thank you, ${session.name.split(" ")[0]}.`;
   if (help) title = questionSent ? "Question sent" : `Ask ${advisorFirstName}`;
   const stageLabel = welcome
@@ -395,11 +384,13 @@ export function ClientExperience({ id }: { id: string }) {
               ? live
                 ? "Confirm and continue"
                 : "Simulate face match & nod"
-              : reviewStep === consentStep
-                ? "Continue to signature"
-                : live
-                  ? "Submit consent"
-                  : "Submit demo consent"
+              : reviewStep === summaryStep
+                ? "Continue to understanding"
+                : reviewStep === consentStep
+                  ? "Continue to signature"
+                  : live
+                    ? "Submit consent"
+                    : "Submit demo consent"
       : phase === "conversation"
         ? allRead
           ? "Begin final review"
@@ -632,6 +623,59 @@ export function ClientExperience({ id }: { id: string }) {
                       : "Look at the camera and give a small nod. This preview simulates the check."}
                   </p>
                 )}
+                {reviewing && reviewStep === summaryStep && (
+                  <div className="wizard-discussion-summary" style={{ textAlign: "left", width: "100%" }}>
+                    <p className="wizard-term-number" style={{ marginBottom: 12 }}>
+                      DISCUSSION SUMMARY
+                    </p>
+                    {session.conversationSummary && (
+                      <div style={{ marginBottom: 18 }}>
+                        <h3 style={{ fontSize: 13, fontWeight: 700, color: "#172b4d", marginBottom: 8, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                          Meeting Conversation Recap
+                        </h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 14px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                          {session.conversationSummary.split("\n").filter(Boolean).map((pt, i) => (
+                            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "#334155", lineHeight: 1.5 }}>
+                              <span style={{ color: "#2563eb", fontWeight: 700 }}>•</span>
+                              <span>{pt}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {session.clientQuestions && session.clientQuestions.length > 0 ? (
+                      <div className="wizard-qa-list" style={{ marginTop: 14 }}>
+                        <h3 style={{ fontSize: 13, fontWeight: 700, color: "#172b4d", marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                          Questions Addressed During Consultation
+                        </h3>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {session.clientQuestions.map((q, idx) => (
+                            <div key={q.id || idx} style={{ padding: "12px 14px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                                <strong style={{ fontSize: 13, color: "#0f172a" }}>
+                                  Q: &ldquo;{q.question}&rdquo;
+                                </strong>
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534" }}>
+                                  Reviewed
+                                </span>
+                              </div>
+                              <p style={{ fontSize: 12, color: "#475569", margin: 0, lineHeight: 1.5 }}>
+                                {q.advisorAnswer || "Discussed and clarified with advisor."}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="wizard-note" style={{ marginTop: 8 }}>
+                        All policy details and questions discussed during the consultation were reviewed with {advisorFirstName}.
+                      </p>
+                    )}
+                    <p className="wizard-note" style={{ marginTop: 16 }}>
+                      Please review the points above before confirming your understanding and providing your signature.
+                    </p>
+                  </div>
+                )}
                 {reviewing &&
                   reviewStep === consentStep &&
                   (session.question ? (
@@ -761,7 +805,7 @@ export function ClientExperience({ id }: { id: string }) {
                                   Q: &ldquo;{q.question}&rdquo;
                                 </strong>
                                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999, background: "#dcfce7", color: "#166534" }}>
-                                  {q.statusLabel || "Answered"}
+                                  Reviewed
                                 </span>
                               </div>
                               <p style={{ fontSize: 12, color: "#475569", margin: 0, lineHeight: 1.5 }}>
@@ -899,7 +943,7 @@ export function ClientExperience({ id }: { id: string }) {
                           session.clientQuestions
                             .map(
                               (q) =>
-                                `• Question: “${q.question}”\n  Status: ${q.statusLabel}\n  Answer: ${q.advisorAnswer || "Clarified with advisor."}`,
+                                `• Question: “${q.question}”\n  Status: ${q.statusLabel === "Reviewed with Advisor" || !q.statusLabel ? "Reviewed" : q.statusLabel}\n  Answer: ${q.advisorAnswer || "Clarified with advisor."}`,
                             )
                             .join("\n\n")
                         : "";
