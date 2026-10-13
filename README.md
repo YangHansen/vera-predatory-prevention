@@ -22,17 +22,20 @@ By pairing a real-time AI Sales Copilot for financial advisors with an accessibl
   - Self-registration is strictly disabled; advisor credentials and MAS representative numbers (`MAS-REP-XXXXXX`) are verified and persisted in `AgentStore`.
   - **Device Terminal Lock**: To satisfy MAS market conduct requirements (Notice FAA-N03), the active advisor account is locked to the physical terminal. In-app account switching is restricted; administrators and developers can reassign device profiles via the dedicated **Device Agent Switcher** on `/dev`.
   - **Strict Session Isolation**: Multi-agent segregation ensures advisors only view, create, and audit their own assigned client sessions (`/api/session?agentId=...`).
-- **Session Dispatch & Pre-Consultation Hand-Off (`/agent/[id]/invite`)**:
+- **Session Dispatch & Dual-Gate Pre-Consultation Hand-Off (`/agent/[id]/invite`)**:
   - Direct policy selection from the MAS-regulated catalog.
   - Instantly generates client pairing QR codes and secure, isolated mobile URLs (`/client/[id]`).
-  - **Advisor Disclosure & Client Verification Gate**: To safeguard regulatory compliance before recording starts, the `"Enter conversation"` button is strictly locked until the advisor confirms *"I have explained the audio recording and camera use"* AND the client finishes their opening camera check and joins.
+  - **Advisor Disclosure & Client Onboarding Gate (`src/lib/session-workflow.ts`)**: To enforce regulatory compliance before consultation recording can begin, the `"Enter conversation"` button is locked behind a strict dual gate:
+    1. The advisor must actively acknowledge: *"I have explained the audio recording and camera use"*.
+    2. The client must complete their onboarding camera calibration and join the session (verifying 14-point mesh geometry).
 - **Live Consultation Room & Continuous Recording (`LiveConversation.tsx`)**:
   - Dual-panel interface with real-time speech transcription, policy clause bookmarks, and customer question tracking.
-  - **Manual Question Resolution & Deduplication**: If AI classification misses a verbal explanation, advisors can manually click `"Mark discussed"` on any question to mark it resolved, instantly unblocking the client's screen. Questions are normalized to prevent duplicate entries.
+  - **Individual Question Resolution**: Advisors can manually click `"Mark discussed"` on any open client question if AI classification missed verbal context, immediately resolving that specific item on both advisor and client screens without dropping other pending questions.
+  - **Semantic Question Deduplication (`src/lib/question-dedup.ts`)**: Natural spoken queries with differing tones, fillers, or phrasing (e.g. *"Can you explain the 90-day waiting period?"* vs *"Why do I have to wait 90 days before coverage begins?"*) are automatically consolidated into single canonical questions in $<1\text{ms}$ without requiring an additional API call.
   - **Resilient Multi-Session Resumption**: If an advisor temporarily navigates back to `/sessions`, in-flight speech buffers are automatically flushed and preserved. Upon returning, previous transcripts and elapsed timers reload seamlessly with a **"Resume"** recording action.
   - **Fluid Advisor Exit**: When the meeting concludes, clicking **"End conversation"** triggers the final compliance audit and transitions the session to `"Client reviewing"`, allowing the customer to review independently on mobile.
 - **Session History & Compliance Audit Overview (`/sessions`, `/session/[id]`)**:
-  - Displays real-time MAS Status badges, Biometric Identity Match percentage, and Customer Hesitation metrics in the format: `xx pts (yy% above threshold)`.
+  - Displays real-time MAS Status badges, Biometric Identity Match percentage, and Customer Hesitation metrics in the format: `xx pts (yy% above threshold)` (e.g., `14 pts (110% above threshold)`).
   - Generates tamper-evident **MAS Compliance Certificates** (`/api/audit/[sessionId]`) and plain-text advisory summaries.
 
 ### 2. Isolated Customer Mobile Portal (`/client/[id]`)
@@ -41,13 +44,14 @@ By pairing a real-time AI Sales Copilot for financial advisors with an accessibl
 - **High-Contrast Face Alignment & Helping Lines**:
   - High-visibility SVG face oval guide with corner alignment brackets, dark drop-shadows, and dynamic color progression (dashed white $\rightarrow$ pulsing blue $\rightarrow$ solid emerald green upon alignment).
   - Mirror-corrected horizontal directional prompts (`"← Move face left"`, `"Move face right →"`) for effortless positioning.
-- **Stage-Based Biometric Consent Flow**:
+- **Stage-Based Biometric Consent & Review Flow**:
   1. *Welcome & Camera Permissions*: Explains zero-video PDPA edge privacy guarantees.
-  2. *Face Calibration*: Calibrates 478-point 3D facial mesh and captures rigid craniofacial baseline.
-  3. *Attentive Reading & Following Along*: Presents plain-language policy details one at a time. The primary action button activates as `"Begin final review"` only on the final detail page, ensuring complete consumer review.
-  4. *Biometric Agreement & Identity Verification*: Verifies head nod gesture (`NOD_AND_VERIFY`) with expanded vertical pitch tolerance and persistent gesture tracking, preventing face drops during natural head nods, backed by an accessible manual confirmation fallback.
-  5. *Two-Factor Digital Signature*: Requires both full legal name (validated word-by-word against the advisor's client record) and a drawn digital signature stroke.
-  6. *Enriched Summary & Download*: Displays a comprehensive session summary including a dedicated Q&A section with all questions asked and advisor explanations, exportable to a plain-text receipt.
+  2. *Face Calibration*: Calibrates 478-point 3D facial mesh and captures rigid craniofacial baseline (14-point coordinate verification).
+  3. *Attentive Reading & Following Along*: Presents plain-language policy details one at a time. The primary action button activates as `"Begin final review"` only after the client reads through all policy topics and the advisor concludes the meeting (`src/lib/review-readiness.ts`), preventing premature execution.
+  4. *Discussion Summary & Q&A Review (Prior to Signing)*: Swapped to display before digital signing (`src/lib/client-review.ts`). The customer reviews key discussion points and a dedicated Q&A section containing all raised questions and advisor answers (labeled as `"Reviewed"`), cleanly chunked for mobile readability.
+  5. *Dual-Stage Biometric Nod Verification*: Verifies head nod gesture (`NOD_AND_VERIFY`) across both onboarding and pre-review stages with expanded vertical pitch tolerance and persistent gesture tracking, preventing false face drops during natural head nods, backed by an accessible manual confirmation fallback.
+  6. *Two-Factor Digital Signature with Exact Name Matching*: Requires both a drawn signature stroke and full legal name input, validated word-by-word against the advisor's client record on both frontend and backend (`namesMatch`).
+  7. *Enriched Summary & Download*: Displays a comprehensive session summary and plain-text receipt with cryptographic verification details.
 
 ### 3. MAS Status Categorization & Weighted Touchpoint Engine
 Vera's branching engine (`src/lib/branching-engine.ts`) evaluates advisory sessions against Singapore MAS Guidelines on Fair Dealing using dynamic weighted touchpoints and an automated Self-Correction Protocol:
@@ -79,11 +83,31 @@ To encourage honest self-correction without compromising consumer protection:
   - The branching engine downgrades the outcome from `RED` to **`YELLOW`** (`AGENT_RECTIFIED_MISALIGNMENT`) with an expedited 2-day review queue.
   - The MAS Audit Certificate logs a transparent audit trail with before-and-after timestamps, giving underwriters clear visibility of the cure.
 
-### 4. Resilient Speech-to-Text Architecture
+### 4. Semantic Question Deduplication & Q&A Alignment Engine (`src/lib/question-dedup.ts`)
+To prevent clutter and confusion during rapid customer speech, Vera features a real-time semantic consolidation engine that prevents duplicate cards across differing tones, hesitation, and paraphrasing without incurring extra API costs:
+- **Two-Tier Consolidation**:
+  1. *Prompt Engineering Tier*: The Gemini compliance auditor stream is instructed to aggregate repeated or rephrased customer inquiries under a single canonical formulation.
+  2. *Algorithmic Local Tier (`<1ms`)*: Spoken filler words (*"Can you explain"*, *"What does that mean"*, *"Is that right"*, *"Basically"*) are stripped, domain vocabulary is stemmed (`paying` $\rightarrow$ `pay`, `monthly` $\rightarrow$ `month`, `canceled` $\rightarrow$ `cancel`), and intent is evaluated using Jaccard token overlap ($\ge 55\%$) and subset inclusion ($\ge 75\%$).
+- **State-Preserving Merge**: Incoming updates retain existing question IDs, original timestamps, and crucially, any existing `ANSWERED` / `"Reviewed"` status and advisor answers.
+- **Individual Resolution**: Advisors can manually click `"Mark discussed"` on any individual question if AI classification misses spoken context, immediately resolving it across all screens without clearing the rest of the queue.
+
+### 5. Regulatory Workflow & Consent Gates (`src/lib/session-workflow.ts`, `src/lib/review-readiness.ts`)
+Vera enforces multi-stage compliance verification to ensure no customer or advisor can bypass statutory disclosure steps:
+- **Dual-Gate Onboarding (`canEnterConversation`)**:
+  - The advisor must acknowledge: *"I have explained the audio recording and camera use"*.
+  - The client must complete onboarding, grant camera/audio permissions, and verify a 14-point facial mesh baseline.
+- **Progressive Review Readiness (`canBeginFinalReview`)**:
+  - The client cannot begin final review prematurely; the `"Begin final review"` action only unlocks once all policy summary points have been paged through and the advisor has concluded the live meeting.
+- **Pre-Signature Discussion Review (`src/lib/client-review.ts`)**:
+  - The Discussion Summary and all answered questions (labeled as `"Reviewed"`) are presented *before* client signature screens, ensuring full comprehension before legal consent execution.
+- **Two-Factor Name Validation (`namesMatch`)**:
+  - Client digital signing validates the typed legal name word-by-word against the advisor's client record (NFKC normalized, case-insensitive) on both the client interface and backend API.
+
+### 6. Resilient Speech-to-Text Architecture
 - **Primary Engine (Google Gemini 3.5 Flash-Lite)**: Cloud-based audio transcription via `/api/copilot/transcribe` utilizing low-latency audio chunking.
 - **Resilient Fallback (Browser Web Speech API)**: Seamless failover to browser-native Web Speech API during network interruptions or API limits without dropping mic audio.
 
-### 5. Cryptographic MAS Audit Certificate (`/api/audit/[sessionId]`)
+### 7. Cryptographic MAS Audit Certificate (`/api/audit/[sessionId]`)
 - Generates tamper-evident SHA-256 hashed certificates recording:
   - Advisor MAS representative registration number.
   - Plain-language policy summary and premium schedules.
@@ -92,7 +116,7 @@ To encourage honest self-correction without compromising consumer protection:
   - Proactive self-correction audit trail (if applicable).
   - Regulatory statutory references (MAS Fair Dealing, FAA Section 26, Insurance Act Section 25(5), PDPA 2012).
 
-### 6. Developer Console & Testbench (`/dev`, `/copilot`)
+### 8. Developer Console & Testbench (`/dev`, `/copilot`)
 - Preserved developer workbench accessible at `/dev` and `/copilot` for live speech simulation, MediaPipe mesh inspection, master device advisor reassignment, and manual state overrides.
 
 ---
@@ -164,7 +188,7 @@ npm run build
 | `POST` | `/api/session` | FR-03 (QR Hand-off) | Creates session & generates base64 QR code data URL |
 | `GET` | `/api/session` | FR-03 | Lists sessions filtered by agent ID (`?agentId=...`) |
 | `GET` | `/api/session/[id]` | FR-03 | Fetches session state and linked policy details with auto-recovery |
-| `PATCH` | `/api/session/[id]` | FR-03, FR-04 | Syncs live dialogue buffer and liveness/confusion telemetry in real time |
+| `PATCH` | `/api/session/[id]` | FR-03, FR-04 | Syncs live dialogue buffer, individual question resolution, and liveness/confusion telemetry |
 | `PATCH` | `/api/session/[id]/status` | FR-01, FR-03 | Updates session workflow state (`HANDED_OFF`, `CUSTOMER_REVIEWING`, `CONSENT_SIGNED`, etc.) |
 | `GET` | `/api/session/[id]/receipt` | Compliance | Generates MAS digital disclosure and signature receipt |
 | `GET` | `/api/audit/[sessionId]` | Compliance | Generates tamper-evident SHA-256 cryptographic MAS compliance certificate |
@@ -173,7 +197,7 @@ npm run build
 | `POST` | `/api/copilot/analyze` | FR-02 (AI Copilot) | Analyzes dialogue and speaker-turn Q&A for MAS compliance & rectification |
 | `POST` | `/api/face/verify` | FR-05 (Biometrics) | Tier 2 Google Gemini multimodal biometric verification endpoint |
 | `POST` | `/api/policy/summarize` | FR-04 (Summarizer) | Distills raw policy clauses or custom text into simplified bullets |
-| `POST` | `/api/consent/submit` | FR-05, FR-06 | Submits signature & telemetry to trigger branching evaluation |
+| `POST` | `/api/consent/submit` | FR-05, FR-06 | Submits signature, word-by-word legal name verification & telemetry to trigger branching evaluation |
 
 ---
 
@@ -229,10 +253,14 @@ vera/
 │   ├── lib/
 │   │   ├── agent-store.ts      # MAS Representative registry persistence (.agents-cache.json)
 │   │   ├── branching-engine.ts # Compliance evaluation engine (weighted touchpoints & dynamic threshold)
+│   │   ├── client-review.ts    # Client review camera mode switcher & mobile Q&A screen chunking
 │   │   ├── dummy-data.ts       # Static Singapore insurance policies catalog (SGD)
 │   │   ├── frontend-demo.ts    # Presentation adapters, session bridges & formatters
 │   │   ├── gemini.ts           # Google Gemini Multimodal STT, Vision, Self-Correction & Audit service
-│   │   └── session-store.ts    # Persistent session coordinator (.sessions-cache.json)
+│   │   ├── question-dedup.ts   # Semantic question deduplication engine (Jaccard similarity & tone normalization)
+│   │   ├── review-readiness.ts # Review readiness gates (topic completion & consultation closure checks)
+│   │   ├── session-store.ts    # Persistent session coordinator (.sessions-cache.json)
+│   │   └── session-workflow.ts # Workflow gates (advisor disclosure, client onboarding & name validation)
 │   └── types/
 │       └── index.ts            # TypeScript domain models (MAS status labels, telemetry, rectifications)
 ├── scripts/

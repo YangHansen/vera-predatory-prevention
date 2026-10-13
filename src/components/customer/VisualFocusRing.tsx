@@ -104,6 +104,7 @@ export default function VisualFocusRing({
 }: VisualFocusRingProps) {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState("");
   const [focusState, setFocusState] = useState<FocusState>("CAMERA_OFF");
   const [statusMessage, setStatusMessage] = useState<string>("Initializing camera check...");
   
@@ -242,6 +243,14 @@ export default function VisualFocusRing({
       hasAgreementAiVerifyFiredRef.current = false;
       aiVerificationStateRef.current = null;
     }
+    // Each camera checkpoint requires a fresh gesture; reading cannot carry one forward.
+    pitchHistoryRef.current = [];
+    yawHistoryRef.current = [];
+    lastNodTriggerRef.current = 0;
+    lastShakeTriggerRef.current = 0;
+    setNodAgreed(false);
+    setShakeDisagree(false);
+    if (mode === "NOD_AND_VERIFY") onNodDetectedRef.current?.(false, 0, 0);
     if (mode !== "NOD_AND_VERIFY") {
       hasPositionedForNodRef.current = false;
     }
@@ -282,6 +291,10 @@ export default function VisualFocusRing({
             };
             setFaceMatchScore(normalizedScore);
             setFaceMatchVerified(isAiMatch);
+            if (!isAiMatch) {
+              setNodAgreed(false);
+              onNodDetectedRef.current?.(false, 0, normalizedScore);
+            }
             setFaceMatchReason(data.reason || (isAiMatch ? "Biometric Match Verified" : "Identity Mismatch Detected"));
           }
         })
@@ -378,11 +391,13 @@ export default function VisualFocusRing({
 
   // Start Front-Facing Camera
   const startCamera = useCallback(async () => {
+    setCameraError("");
     if (typeof window === "undefined" || !navigator?.mediaDevices?.getUserMedia) {
       console.warn("Camera API not available");
       setCameraActive(false);
       setFocusState("CAMERA_OFF");
-      setStatusMessage("Verified via Reading Timer");
+      setStatusMessage("Camera check unavailable");
+      setCameraError("Camera access is unavailable. Allow camera access in your browser, then try again.");
       return;
     }
 
@@ -415,7 +430,8 @@ export default function VisualFocusRing({
       console.warn("Camera access declined or unavailable:", err);
       setCameraActive(false);
       setFocusState("CAMERA_OFF");
-      setStatusMessage("Verified via Reading Timer");
+      setStatusMessage("Camera check unavailable");
+      setCameraError("Camera access is unavailable. Allow camera access in your browser, then try again.");
     }
   }, []);
 
@@ -1265,7 +1281,7 @@ export default function VisualFocusRing({
           }
 
           // 3. STAGE 4 NOD DETECTION & CONFUSION TRACKING (Only runs once positioned)
-          if (mode === "NOD_AND_VERIFY") {
+          if (mode === "NOD_AND_VERIFY" || mode === "FOCUS_MONITOR") {
             // Establish ambient room lighting asymmetry baseline if not yet set
             if (baselineCheekAsymmetryRef.current === null) {
               baselineCheekAsymmetryRef.current = cheekAsymmetry;
@@ -1467,7 +1483,7 @@ export default function VisualFocusRing({
               }
             }
 
-            if (posX !== null && posY !== null) {
+            if (mode === "NOD_AND_VERIFY" && posX !== null && posY !== null) {
               pitchHistoryRef.current.push({ time: now, pitch: posY });
               yawHistoryRef.current.push({ time: now, yaw: posX });
 
@@ -1500,9 +1516,9 @@ export default function VisualFocusRing({
                 }
                 // NOD (Agreement): Vertical movement diffP MUST clearly dominate horizontal movement diffY
                 else if (diffP >= GESTURE_MIN_AMP && diffP > diffY * 1.15 && now - lastNodTriggerRef.current > 1500) {
-                  // BIOMETRIC SECURITY GATE: Block nod agreement ONLY if confirmed mismatch by AI
-                  if (aiVerificationStateRef.current && !aiVerificationStateRef.current.isSamePerson) {
-                    setStatusMessage("Agreement Blocked: Identity Mismatch (Different person detected)");
+                  // A gesture cannot substitute for a verified face match.
+                  if (!isMatchVerified || (aiVerificationStateRef.current && !aiVerificationStateRef.current.isSamePerson)) {
+                    setStatusMessage("Keep your face centred until the identity check completes, then nod again.");
                     setShakeDisagree(true);
                     setNodAgreed(false);
                     return;
@@ -1524,7 +1540,7 @@ export default function VisualFocusRing({
                   pitchHistoryRef.current = [];
                   yawHistoryRef.current = [];
                   if (onNodDetectedRef.current) {
-                    onNodDetectedRef.current(true, 0.96, Math.max(effectiveMatch, 0.92));
+                    onNodDetectedRef.current(true, 0.96, effectiveMatch);
                   }
                 }
               }
@@ -1548,24 +1564,9 @@ export default function VisualFocusRing({
       </div>
       <div className="camera-controls">
         <button className="v-button secondary full" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Turn camera off" : "Turn on camera"}</button>
-        {mode === "NOD_AND_VERIFY" && !minimized && (
-          <button
-            type="button"
-            className={`v-button ${nodAgreed ? "secondary" : "primary"} full`}
-            style={{ marginTop: 8 }}
-            onClick={() => {
-              setNodAgreed(true);
-              setShakeDisagree(false);
-              if (onNodDetectedRef.current) {
-                onNodDetectedRef.current(true, 0.98, Math.max(faceMatchScore, 0.92));
-              }
-            }}
-          >
-            <CheckCircle2 size={15} />
-            <span>{nodAgreed ? "✓ Identity confirmed" : "Confirm identity & proceed"}</span>
-          </button>
-        )}
+
       </div>
+      {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
       <p className="camera-privacy" role="status">
         {!cameraActive
           ? "Enable your camera to run the check."
@@ -1573,10 +1574,12 @@ export default function VisualFocusRing({
           ? calibrationProgress >= 100
             ? "Opening check complete"
             : positioningHint
+          : mode === "FOCUS_MONITOR"
+          ? "Camera on while you read. Read at your own pace."
           : nodAgreed
           ? "Face and nod check complete"
           : faceMatchVerified
-          ? "Look at the camera and nod to confirm, or tap confirm."
+          ? "Look at the camera, nod down, then return to centre."
           : isFacePositioned
           ? "Look at the camera and nod to confirm."
           : faceMatchReason}

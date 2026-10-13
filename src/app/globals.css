@@ -5364,3 +5364,12 @@ body {
 .conversation-room .room-notice { margin-top:22px; }
 @media(max-width:900px){.room-heading{align-items:flex-start;flex-direction:column}.room-columns{grid-template-columns:1fr}.room-batch{flex-wrap:wrap}.room-status{flex-wrap:wrap}.room-status p{margin-left:0}.history-facts{grid-template-columns:1fr 1fr}}
 @media(max-width:520px){.conversation-room-main{padding:20px 16px}.room-heading h1{font-size:26px}.room-actions{flex-wrap:wrap}.room-card > header,.room-card-body{padding:18px}.room-card h2{font-size:17px}.room-question{align-items:flex-start;flex-direction:column;gap:8px}.history-facts > div{padding:16px}.room-batch{font-size:12px}.history-table-hint{display:none}}
+
+
+/* Review and question-resolution details */
+.room-question { flex-wrap: wrap; }
+.room-answer-note { flex-basis: 100%; display: grid; gap: 6px; font-size: 12px; }
+.room-answer-note textarea { width: 100%; min-height: 64px; padding: 10px; border: 1px solid #dbe4f1; border-radius: 6px; font: inherit; color: #294363; resize: vertical; background: white; }
+.history-signal-detail { display: block; line-height: 1.5; margin-top: 7px; }
+.wizard-answer { font-size: 15px; line-height: 1.55; color: #526581; }
+.wizard-answer strong { display: block; color: #172b4d; margin-bottom: 6px; }

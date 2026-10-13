@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { Session, SessionStatus, CopilotAnalysisResult, LivenessTelemetry, BranchingResult } from "@/types";
 import { getDefaultPolicy } from "./dummy-data";
+import { mergeClientQuestions } from "./question-dedup";
 
 const CACHE_FILE = path.join(process.cwd(), ".sessions-cache.json");
 
@@ -154,29 +155,12 @@ export class SessionStore {
 
     if (event.clientQuestions && event.clientQuestions.length > 0) {
       const existing = session.clientQuestions || [];
-      const map = new Map<string, any>();
-      existing.forEach((q) => map.set(q.question.toLowerCase().trim(), q));
-      event.clientQuestions.forEach((q) => {
-        const key = q.question.toLowerCase().trim();
-        const prev = map.get(key);
-        if (prev && prev.status === "ANSWERED") {
-          map.set(key, {
-            ...prev,
-            ...q,
-            status: "ANSWERED",
-            statusLabel: prev.statusLabel || q.statusLabel || "Discussed with advisor",
-            advisorAnswer: q.advisorAnswer || prev.advisorAnswer,
-          });
-        } else {
-          map.set(key, { ...(prev || {}), ...q });
-        }
-      });
-      session.clientQuestions = Array.from(map.values()).map((q, idx) => ({
-        ...q,
-        id: q.id ? `${q.id.replace(/_\d+$/, "")}_${idx}` : `q_${Date.now()}_${idx}`,
-      }));
+      session.clientQuestions = mergeClientQuestions(existing, event.clientQuestions);
     }
 
+    if (session.clientQuestions?.length) {
+      session.clientQuestion = session.clientQuestions.find((q) => q.status !== "ANSWERED")?.question || "";
+    }
     if (event.coveredSectionIds && event.coveredSectionIds.length > 0) {
       const current = new Set(session.explainedSections || []);
       event.coveredSectionIds.forEach((sid) => current.add(sid));

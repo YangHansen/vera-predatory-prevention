@@ -107,7 +107,7 @@ export function SessionHistory({ session }: { session: DemoSession }) {
             <ShieldCheck size={19} />
             <span>
               Biometric Match
-              <strong>{result?.livenessScore ? `${Math.round(result.livenessScore * 100)}%` : "96%"}</strong>
+              <strong>{result?.livenessScore ? `${Math.round(result.livenessScore * 100)}%` : "Not recorded"}</strong>
             </span>
           </div>
           <div>

@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
+import { canEnterConversation } from "@/lib/session-workflow";
+import { AgentInvitation } from "./AgentInvitation";
 import { SessionHistory } from "./SessionHistory";
 import { LiveConversation } from "./LiveConversation";
 import { Brand } from "./Brand";
@@ -35,7 +37,7 @@ export function SessionWorkspace({ id }: { id: string }) {
     useDemoSession(id);
   const [presentation,setPresentation]=useState(false);
   const [presentationPhase,setPresentationPhase]=useState("conversation");
-  useEffect(()=>{setPresentation(new URLSearchParams(window.location.search).get("presentation") === "1");},[]);
+  useEffect(()=>{setPresentation(!live && new URLSearchParams(window.location.search).get("presentation") === "1");},[live]);
   const [qr, setQr] = useState("");
   const [invite, setInvite] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -62,16 +64,6 @@ export function SessionWorkspace({ id }: { id: string }) {
     const timer = setInterval(() => setElapsed((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [playing, session?.phase]);
-  useEffect(() => {
-    if (
-      live &&
-      session &&
-      (session.phase === "conversation" || session.backend?.liveDialogueBuffer?.trim()) &&
-      session.backend?.status === "QR_GENERATED"
-    ) {
-      void update({ phase: "conversation" });
-    }
-  }, [live, session, update]);
   if (!ready)
     return (
       <div className="session-app loading-state">
@@ -89,6 +81,7 @@ export function SessionWorkspace({ id }: { id: string }) {
         </Link>
       </div>
     );
+  if (live && session.phase !== "signed" && (!session.backend || !canEnterConversation(session.backend))) return <AgentInvitation id={id} />;
   const policy =
     session.policyData ||
     DUMMY_POLICIES.find((p) => p.name.startsWith(session.policy)) ||
@@ -96,15 +89,8 @@ export function SessionWorkspace({ id }: { id: string }) {
   const analysis = session.backend?.copilotEvents.at(-1);
   const ended = session.phase === "signed";
   if (ended && !presentation) return <SessionHistory session={session} />;
-  const hasDialogueOrEvents =
-    Boolean(session.backend?.liveDialogueBuffer?.trim()) ||
-    Boolean(session.backend?.copilotEvents && session.backend.copilotEvents.length > 0);
-
   const inConversation =
-    presentation ||
-    session.phase === "conversation" ||
-    session.phase === "review" ||
-    hasDialogueOrEvents;
+    (!live && presentation) || session.phase === "conversation" || session.phase === "review";
 
   if (inConversation) {
     const backendStatus: import("@/types").SessionStatus =
@@ -132,6 +118,8 @@ export function SessionWorkspace({ id }: { id: string }) {
           customerName: session.name,
           policyId: policy.id,
           status: backendStatus,
+          conversationEndedAt: session.conversationEndedAt,
+          readTopics: session.readTopics,
           recordingConsent: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -145,21 +133,21 @@ export function SessionWorkspace({ id }: { id: string }) {
       <LiveConversation
         key={id}
         session={cleanBackend}
-        demo={false}
+        demo={!live}
         onRefresh={refresh}
         onReset={async () => {
           if (presentation) {
             setPresentationPhase("conversation");
             return true;
           }
-          return update({ phase: "conversation" });
+          return update({ phase: "conversation", readTopics: [], conversationEndedAt: undefined });
         }}
         onEnd={async () => {
           if (presentation) {
             setPresentationPhase("review");
             return true;
           }
-          return update({ phase: "review" });
+          return update({ conversationEndedAt: new Date().toISOString() });
         }}
       />
     );
@@ -579,15 +567,15 @@ export function SessionWorkspace({ id }: { id: string }) {
                     </p>
                     <button
                       className="v-button primary full"
-                      disabled={busy || session.phase === "review"}
+                      disabled={busy || Boolean(session.conversationEndedAt) || session.phase === "review"}
                       onClick={async () => {
-                        if (await update({ phase: "review" }))
+                        if (await update({ conversationEndedAt: new Date().toISOString() }))
                           setPlaying(false);
                       }}
                     >
                       {session.phase === "review"
                         ? "Waiting for client review"
-                        : "Move to client review"}
+                        : session.conversationEndedAt ? "Waiting for client review" : "End conversation"}
                       <ArrowRight size={16} />
                     </button>
                   </>

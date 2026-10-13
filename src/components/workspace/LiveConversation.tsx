@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { DUMMY_POLICIES } from "@/lib/dummy-data";
 import type { Session } from "@/types";
+import { canEnterConversation } from "@/lib/session-workflow";
 import { getMasStatusLabel } from "@/types";
 export function LiveConversation({
   session,
@@ -44,6 +45,8 @@ export function LiveConversation({
   const [interim, setInterim] = useState("");
   const [text, setText] = useState(session.liveDialogueBuffer || "");
   const [error, setError] = useState("");
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [working, setWorking] = useState(false);
   const [remaining, setRemaining] = useState(60);
   const buffer = useRef(text);
@@ -127,11 +130,8 @@ export function LiveConversation({
     }, 1000);
     return () => clearInterval(timer);
   }, [listening, analyze]);
-  const canRecord =
-    session.status !== "CUSTOMER_REVIEWING" &&
-    session.status !== "LIVENESS_CHECK" &&
-    session.status !== "CONSENT_SIGNED" &&
-    session.status !== "SUBMITTED";
+  const canRecord = (demo || canEnterConversation(session)) &&
+    session.status === "HANDED_OFF" && !session.conversationEndedAt;
   useEffect(() => {
     if (!canRecord) {
       if (listening) void analyze();
@@ -164,8 +164,7 @@ export function LiveConversation({
     setListening(false);
     try {
       if (await analyze()) {
-        await onEnd?.();
-        router.push("/sessions");
+        if (await onEnd?.()) router.push("/sessions");
       }
     } finally {
       setEnding(false);
@@ -179,13 +178,13 @@ export function LiveConversation({
         </Link>
         <header className="room-heading">
           <div>
-            <h1>{reviewing ? "Client final review" : "Live conversation"}</h1>
+            <h1>{reviewing ? "Client final review" : session.conversationEndedAt ? "Conversation ended" : "Live conversation"}</h1>
             <p>
               {session.customerName} <span>·</span>{" "}
               {policy.name.split(" (")[0]} <span>·</span>{" "}
               {reviewing
                 ? "Client is reviewing independently on mobile"
-                : `${clock(elapsed)} elapsed`}
+                : session.conversationEndedAt ? "Waiting for the client to finish reading and begin final review" : `${clock(elapsed)} elapsed`}
             </p>
           </div>
           <div className="room-actions">
@@ -223,7 +222,7 @@ export function LiveConversation({
             ) : (
               <button
                 className="v-button primary"
-                disabled={ending || working}
+                disabled={ending || working || Boolean(session.conversationEndedAt)}
                 onClick={() => void finish()}
               >
                 {ending ? "Finishing…" : "End conversation"}
@@ -319,22 +318,36 @@ export function LiveConversation({
                           : "Needs explanation"}
                       </span>
                       {q.status !== "ANSWERED" && (
+                        <label className="room-answer-note">
+                          Answer summary (optional)
+                          <textarea value={answers[q.id] || ""} maxLength={2000}
+                            onChange={(e) => setAnswers((current) => ({ ...current, [q.id]: e.target.value }))}
+                            placeholder="Add the explanation you gave, for the client’s final review." />
+                        </label>
+                      )}
+                      {q.status !== "ANSWERED" && (
                         <button
                           type="button"
                           className="text-button"
+                          disabled={Boolean(resolving)}
                           style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: "#0052cc" }}
                           onClick={async () => {
-                            if (demo) return;
-                            const response = await fetch(
-                              `/api/session/${session.id}`,
-                              {
+                            if (demo || resolving) return;
+                            setResolving(q.id);
+                            setError("");
+                            try {
+                              const response = await fetch(`/api/session/${session.id}`, {
                                 method: "PATCH",
                                 headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ resolveQuestionId: q.id, clientQuestion: "" }),
-                              },
-                            );
-                            if (response.ok) await onRefresh();
-                            else setError("Could not mark the question as discussed.");
+                                body: JSON.stringify({ resolveQuestionId: q.id, advisorAnswer: answers[q.id] || "" }),
+                              });
+                              if (!response.ok) throw new Error("Could not mark the question as discussed. Please retry.");
+                              await onRefresh();
+                            } catch (e) {
+                              setError(e instanceof Error ? e.message : "Could not save the answer. Please retry.");
+                            } finally {
+                              setResolving(null);
+                            }
                           }}
                         >
                           Mark discussed
