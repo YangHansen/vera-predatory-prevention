@@ -24,7 +24,8 @@ export const metadata: Metadata = {
     telephone: false,
   },
   icons: {
-    icon: "/icon.svg",
+    icon: { url: "/vera-favicon.png", type: "image/png", sizes: "64x64" },
+    shortcut: "/vera-favicon.png",
   },
 };
 
