@@ -5373,3 +5373,33 @@ body {
 .history-signal-detail { display: block; line-height: 1.5; margin-top: 7px; }
 .wizard-answer { font-size: 15px; line-height: 1.55; color: #526581; }
 .wizard-answer strong { display: block; color: #172b4d; margin-bottom: 6px; }
+
+/* Shared horizontal Vera AI identity across agent and consumer screens. */
+.vera-brand,
+.vera-brand.small,
+.client-header .vera-brand,
+.wizard-header .vera-brand {
+  display: inline-flex;
+  max-width: 100%;
+  flex-shrink: 0;
+  line-height: 0;
+  letter-spacing: normal;
+}
+.vera-brand-logo {
+  display: block;
+  width: 190px;
+  max-width: 100%;
+  height: auto;
+}
+.vera-brand.small .vera-brand-logo {
+  width: 170px;
+}
+.brand-link {
+  max-width: calc(100% - 26px);
+}
+@media (max-width: 600px) {
+  .client-header .vera-brand-logo,
+  .wizard-header .vera-brand-logo {
+    width: 140px;
+  }
+}
